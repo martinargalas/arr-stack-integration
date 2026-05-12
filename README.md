@@ -1,5 +1,11 @@
 # Arr Stack Integration
 
+[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![version](https://img.shields.io/github/v/release/martinargalas/arr-stack-integration)](https://github.com/martinargalas/arr-stack-integration/releases)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2023.x%2B-brightgreen.svg)](https://www.home-assistant.io)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-☕-yellow)](https://buymeacoffee.com/argii)
+
 A Home Assistant custom integration that acts as a secure server-side proxy between the [Arr Stack Card](https://github.com/martinargalas/ha-arr-stack-card) and your local media services.
 
 ---
@@ -104,7 +110,7 @@ If you configure a family account (non-admin Overseerr user), the card will use 
 
 ## Support
 
-[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-☕-yellow?style=flat-square)](https://buymeacoffee.com/argii)
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-☕-yellow)](https://buymeacoffee.com/argii)
 
 ---
 
