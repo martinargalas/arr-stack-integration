@@ -109,12 +109,6 @@ If you configure a family account (non-admin Overseerr user), the card will use 
 
 ---
 
-## Support
-
-[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-☕-yellow)](https://buymeacoffee.com/argii)
-
----
-
 ## Related
 
 - [Arr Stack Card](https://github.com/martinargalas/ha-arr-stack-card) — the Lovelace card that uses this integration
