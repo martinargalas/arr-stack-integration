@@ -114,6 +114,14 @@ If you configure a family account (non-admin Seerr user), the card will use that
 
 ---
 
+## Sensors & entities
+
+This integration currently does not expose any Home Assistant sensors, entities, or devices. It acts purely as a proxy — all data is fetched on demand by the card and displayed directly.
+
+Native HA sensors (download progress, queue status, library counts, etc.) are planned for a future release.
+
+---
+
 ## Reconfigure
 
 You can change the integration settings at any time without reinstalling:
