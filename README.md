@@ -26,7 +26,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 |---------|------|----------|
 | Radarr | Movie library management | ✅ Yes |
 | Sonarr | TV show library management | ✅ Yes |
-| Overseerr / Jellyseerr | Media discovery & requests | ✅ Yes |
+| Seerr | Media discovery & requests | ✅ Yes |
 | qBittorrent | Torrent download client | Optional |
 | SABnzbd | Usenet download client | Optional |
 | Bazarr | Subtitle management | Optional |
@@ -67,8 +67,8 @@ Only three services are required. Leave qBittorrent, SABnzbd, and Bazarr fields 
 - Radarr URL + API key
 - Sonarr URL + API key
 
-**Step 3 — Discovery** *(Overseerr required, rest optional)*
-- Overseerr/Jellyseerr URL + API key
+**Step 3 — Discovery** *(Seerr required, rest optional)*
+- Seerr URL + API key
 - Family account email + password *(optional — for non-admin household users)*
 - Bazarr URL + API key *(optional — for subtitle status badges)*
 
@@ -99,8 +99,8 @@ Only three services are required. Leave qBittorrent, SABnzbd, and Bazarr fields 
 
 | Field | Example | Description |
 |-------|---------|-------------|
-| Overseerr URL | `http://192.168.1.10:5055` | Required (Jellyseerr also supported) |
-| Overseerr API key | `••••` | Required |
+| Seerr URL | `http://192.168.1.10:5055` | Required (Jellyseerr also supported) |
+| Seerr API key | `••••` | Required |
 | Family account email | `user@example.com` | Optional — non-admin household user |
 | Family account password | `••••` | Optional |
 | Bazarr URL | `http://192.168.1.10:6767` | Optional |
@@ -110,7 +110,7 @@ Only three services are required. Leave qBittorrent, SABnzbd, and Bazarr fields 
 
 ## Family Account
 
-If you configure a family account (non-admin Overseerr user), the card will use that account for media requests when the logged-in HA user is not an admin. This allows household members to request media without admin privileges.
+If you configure a family account (non-admin Seerr user), the card will use that account for media requests when the logged-in HA user is not an admin. This allows household members to request media without admin privileges.
 
 ---
 
