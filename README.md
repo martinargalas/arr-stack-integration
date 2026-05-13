@@ -10,6 +10,8 @@
 
 <a href="https://discord.gg/SUfDr52G" target="_blank"><img src="https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join Discord" height="50"></a>
 
+![Logo](custom_components/arr_stack/icon.png)
+
 A Home Assistant custom integration that acts as a secure server-side proxy between the [Arr Stack Card](https://github.com/martinargalas/ha-arr-stack-card) and your local media services.
 
 ---
@@ -51,6 +53,8 @@ Browsers block direct API calls from a web page to local network services (CORS 
 3. Add the integration via **Settings → Devices & Services**
 
 > ⚠️ After any change to the integration settings, **restart Home Assistant** for changes to take effect.
+>
+> When settings are changed, a notification appears in **Settings → Repairs** with a one-click restart option.
 
 ---
 
@@ -109,6 +113,16 @@ Only three services are required. Leave qBittorrent, SABnzbd, and Bazarr fields 
 ## Family Account
 
 If you configure a family account (non-admin Overseerr user), the card will use that account for media requests when the logged-in HA user is not an admin. This allows household members to request media without admin privileges.
+
+---
+
+## Reconfigure
+
+You can change the integration settings at any time without reinstalling:
+
+**Settings → Devices & Services → Arr Stack → ⋮ → Reconfigure**
+
+All fields support being cleared — removing a URL disables that service in the card.
 
 ---
 

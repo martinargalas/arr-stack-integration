@@ -3,6 +3,7 @@ import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
@@ -154,7 +155,16 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Multi-step config flow s ověřením přístupu."""
 
     VERSION = 1
-    _data: dict = {}
+
+    def __init__(self):
+        self._data: dict = {}
+        self._reconfigure_entry = None
+
+    async def async_step_reconfigure(self, user_input=None):
+        """Vstupní bod pro přenastavení existující integrace."""
+        self._reconfigure_entry = self._get_reconfigure_entry()
+        self._data = dict(self._reconfigure_entry.data)
+        return await self.async_step_user()
 
     # ── Krok 1: qBittorrent + SABnzbd (volitelné) ────────────────────────────
 
@@ -182,16 +192,19 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors[CONF_SAB_URL] = err
 
             if not errors:
-                self._data.update(user_input)
+                for key in [CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS, CONF_SAB_URL, CONF_SAB_KEY]:
+                    self._data[key] = user_input.get(key, "")
                 return await self.async_step_media()
 
         schema = vol.Schema({
-            vol.Optional(CONF_QBIT_URL,  default=self._data.get(CONF_QBIT_URL,  "")): str,
-            vol.Optional(CONF_QBIT_USER, default=self._data.get(CONF_QBIT_USER, "")): str,
-            vol.Optional(CONF_QBIT_PASS, default=self._data.get(CONF_QBIT_PASS, "")): str,
-            vol.Optional(CONF_SAB_URL,   default=self._data.get(CONF_SAB_URL,   "")): str,
-            vol.Optional(CONF_SAB_KEY,   default=self._data.get(CONF_SAB_KEY,   "")): str,
+            vol.Optional(CONF_QBIT_URL):  str,
+            vol.Optional(CONF_QBIT_USER): str,
+            vol.Optional(CONF_QBIT_PASS): str,
+            vol.Optional(CONF_SAB_URL):   str,
+            vol.Optional(CONF_SAB_KEY):   str,
         })
+        if self._data:
+            schema = self.add_suggested_values_to_schema(schema, self._data)
         return self.async_show_form(
             step_id="user",
             data_schema=schema,
@@ -220,11 +233,16 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_discovery()
 
         schema = vol.Schema({
-            vol.Required(CONF_RADARR_URL, default=self._data.get(CONF_RADARR_URL, "http://192.168.1.x:7878")): str,
-            vol.Required(CONF_RADARR_KEY, default=self._data.get(CONF_RADARR_KEY, "")): str,
-            vol.Required(CONF_SONARR_URL, default=self._data.get(CONF_SONARR_URL, "http://192.168.1.x:8989")): str,
-            vol.Required(CONF_SONARR_KEY, default=self._data.get(CONF_SONARR_KEY, "")): str,
+            vol.Required(CONF_RADARR_URL): str,
+            vol.Required(CONF_RADARR_KEY): str,
+            vol.Required(CONF_SONARR_URL): str,
+            vol.Required(CONF_SONARR_KEY): str,
         })
+        suggested = self._data if self._data else {
+            CONF_RADARR_URL: "http://192.168.1.x:7878",
+            CONF_SONARR_URL: "http://192.168.1.x:8989",
+        }
+        schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(
             step_id="media",
             data_schema=schema,
@@ -263,16 +281,28 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not errors:
                 self._data.update(user_input)
+                for key in [CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS, CONF_BAZARR_URL, CONF_BAZARR_KEY]:
+                    self._data[key] = user_input.get(key, "")
+                if self._reconfigure_entry is not None:
+                    self.hass.config_entries.async_update_entry(
+                        self._reconfigure_entry, data=dict(self._data)
+                    )
+                    await self.hass.config_entries.async_reload(
+                        self._reconfigure_entry.entry_id
+                    )
+                    return self.async_abort(reason="reconfigure_successful")
                 return self.async_create_entry(title="Arr Stack", data=self._data)
 
         schema = vol.Schema({
-            vol.Required(CONF_SEERR_URL,           default=self._data.get(CONF_SEERR_URL,           "http://192.168.1.x:5055")): str,
-            vol.Required(CONF_SEERR_KEY,           default=self._data.get(CONF_SEERR_KEY,           "")): str,
-            vol.Optional(CONF_SEERR_FAMILY_EMAIL,  default=self._data.get(CONF_SEERR_FAMILY_EMAIL,  "")): str,
-            vol.Optional(CONF_SEERR_FAMILY_PASS,   default=self._data.get(CONF_SEERR_FAMILY_PASS,   "")): str,
-            vol.Optional(CONF_BAZARR_URL,          default=self._data.get(CONF_BAZARR_URL,          "")): str,
-            vol.Optional(CONF_BAZARR_KEY,          default=self._data.get(CONF_BAZARR_KEY,          "")): str,
+            vol.Required(CONF_SEERR_URL):          str,
+            vol.Required(CONF_SEERR_KEY):          str,
+            vol.Optional(CONF_SEERR_FAMILY_EMAIL): str,
+            vol.Optional(CONF_SEERR_FAMILY_PASS):  str,
+            vol.Optional(CONF_BAZARR_URL):         str,
+            vol.Optional(CONF_BAZARR_KEY):         str,
         })
+        suggested = self._data if self._data else {CONF_SEERR_URL: "http://192.168.1.x:5055"}
+        schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(
             step_id="discovery",
             data_schema=schema,

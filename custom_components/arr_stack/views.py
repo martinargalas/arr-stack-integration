@@ -7,6 +7,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
+    DOMAIN,
     CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
     CONF_SAB_URL, CONF_SAB_KEY,
     CONF_RADARR_URL, CONF_RADARR_KEY,
@@ -33,13 +34,17 @@ class ArrStackProxyView(HomeAssistantView):
     name = "api:arr_stack:proxy"
     requires_auth = True
 
-    def __init__(self, hass, config: dict) -> None:
+    def __init__(self, hass) -> None:
         self._hass = hass
-        self._cfg = config
         # Dedikovaná session pro qBit — potřebuje cookie jar pro session auth
         self._qbit_session: aiohttp.ClientSession | None = None
         # Session pro rodinný Overseerr účet
         self._seerr_family_session: aiohttp.ClientSession | None = None
+
+    @property
+    def _cfg(self) -> dict:
+        """Čte aktuální config dynamicky — aktualizuje se bez restartu HA."""
+        return self._hass.data.get(DOMAIN, {}).get("config", {})
 
     # ── Session helpers ──────────────────────────────────────────────────
 
