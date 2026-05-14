@@ -46,15 +46,21 @@ async def _test_qbit(session: aiohttp.ClientSession, url: str, user: str, passwo
     if err := _url_error(url):
         return err
     try:
+        base = url.rstrip('/')
         async with session.post(
-            f"{url.rstrip('/')}/api/v2/auth/login",
+            f"{base}/api/v2/auth/login",
             data={"username": user, "password": password},
+            headers={"Origin": base, "Referer": base + "/"},
             timeout=aiohttp.ClientTimeout(total=8),
         ) as r:
             text = await r.text()
             if text.strip() == "Ok.":
                 return None
             if text.strip() == "Fails.":
+                return "qbit_bad_credentials"
+            if r.status == 403 or "Forbidden" in text:
+                return "qbit_forbidden"
+            if r.status == 401 or "Unauthorized" in text:
                 return "qbit_bad_credentials"
             return "qbit_login_failed"
     except Exception as e:

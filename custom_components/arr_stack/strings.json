@@ -24,6 +24,13 @@
           "qbittorrent_password": "qBittorrent password (optional)",
           "sabnzbd_url": "SABnzbd URL (optional)",
           "sabnzbd_api_key": "SABnzbd API key (optional)"
+        },
+        "data_description": {
+          "qbittorrent_url": "e.g. http://192.168.1.10:8080 — must include http://",
+          "qbittorrent_user": "The username you use to log into qBittorrent Web UI",
+          "qbittorrent_password": "The password for the qBittorrent Web UI",
+          "sabnzbd_url": "e.g. http://192.168.1.10:8080 — must include http://",
+          "sabnzbd_api_key": "Find it in SABnzbd → Config → General → API Key"
         }
       },
       "media": {
@@ -34,6 +41,12 @@
           "radarr_api_key": "Radarr API key",
           "sonarr_url": "Sonarr URL",
           "sonarr_api_key": "Sonarr API key"
+        },
+        "data_description": {
+          "radarr_url": "e.g. http://192.168.1.10:7878 — default port is 7878",
+          "radarr_api_key": "Find it in Radarr → Settings → General → API Key",
+          "sonarr_url": "e.g. http://192.168.1.10:8989 — default port is 8989",
+          "sonarr_api_key": "Find it in Sonarr → Settings → General → API Key"
         }
       },
       "discovery": {
@@ -46,6 +59,14 @@
           "seerr_family_password": "Family account password (optional)",
           "bazarr_url": "Bazarr URL (optional)",
           "bazarr_api_key": "Bazarr API key (optional)"
+        },
+        "data_description": {
+          "seerr_url": "e.g. http://192.168.1.10:5055 — default port is 5055",
+          "seerr_api_key": "Find it in Overseerr/Jellyseerr → Settings → General → API Key",
+          "seerr_family_email": "A non-admin Overseerr/Jellyseerr account for family members — used to show and withdraw their own requests",
+          "seerr_family_password": "Password for the family account",
+          "bazarr_url": "e.g. http://192.168.1.10:6767 — default port is 6767",
+          "bazarr_api_key": "Find it in Bazarr → Settings → General → API Key"
         }
       }
     },
@@ -75,7 +96,8 @@
       "bazarr_bad_key": "Invalid Bazarr API key — find it in Bazarr → Settings → General → API Key",
       "bazarr_error": "Bazarr returned an unexpected error — check the URL and that Bazarr is running",
       "bazarr_wrong_port": "Bazarr not found at this address — default port is 6767. Check the URL",
-      "unknown": "Unexpected error — check Home Assistant logs (Settings → System → Logs) for details"
+      "unknown": "Unexpected error — check Home Assistant logs (Settings → System → Logs) for details",
+      "qbit_forbidden": "qBittorrent refused the connection (403 Forbidden) — go to qBittorrent → Tools → Options → Web UI → disable 'Enable Host header validation' or add Home Assistant's IP to the allowed list"
     }
   }
 }
