@@ -91,6 +91,9 @@ class ArrStackProxyView(HomeAssistantView):
     async def post(self, request: web.Request, service: str, path: str) -> web.Response:
         return await self._handle(request, service, path, "POST")
 
+    async def delete(self, request: web.Request, service: str, path: str) -> web.Response:
+        return await self._handle(request, service, path, "DELETE")
+
     async def _handle(
         self, request: web.Request, service: str, path: str, method: str
     ) -> web.Response:
@@ -272,6 +275,17 @@ class ArrStackProxyView(HomeAssistantView):
                         status=r.status,
                     )
 
+            # Smaže film z knihovny
+            if path.startswith("movie/") and method == "DELETE":
+                movie_id = path.split("/", 1)[1]
+                delete_files = request.query.get("deleteFiles", "false")
+                async with http.delete(
+                    f"{base}/api/v3/movie/{movie_id}",
+                    headers=hdrs,
+                    params={"deleteFiles": delete_files, "addImportListExclusion": "false"},
+                ) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             # Grab — stáhne konkrétní release do download klienta
             if path == "release" and method == "POST":
                 body = await request.json()
@@ -346,6 +360,17 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "history" and method == "GET":
                 series_id = request.query.get("seriesId", "")
                 async with http.get(f"{base}/api/v3/history/series", headers=hdrs, params={"seriesId": series_id, "pageSize": "200"}) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Smaže seriál z knihovny
+            if path.startswith("series/") and method == "DELETE":
+                series_id = path.split("/", 1)[1]
+                delete_files = request.query.get("deleteFiles", "false")
+                async with http.delete(
+                    f"{base}/api/v3/series/{series_id}",
+                    headers=hdrs,
+                    params={"deleteFiles": delete_files},
+                ) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
         # ════════════════════════════════════════════
