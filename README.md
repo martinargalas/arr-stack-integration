@@ -102,8 +102,8 @@ Only three services are required. Leave qBittorrent, SABnzbd, and Bazarr fields 
 |-------|---------|-------------|
 | Seerr URL | `http://192.168.1.10:5055` | Required (Jellyseerr also supported) |
 | Seerr API key | `••••` | Required |
-| Family account email | `user@example.com` | Optional — non-admin household user |
-| Family account password | `••••` | Optional |
+| Family account email | `user@example.com` | Optional — non-admin Overseerr/Jellyseerr account for household users |
+| Family account password | `••••` | Optional — password for the Overseerr/Jellyseerr account above |
 | Bazarr URL | `http://192.168.1.10:6767` | Optional |
 | Bazarr API key | `••••` | Optional |
 
