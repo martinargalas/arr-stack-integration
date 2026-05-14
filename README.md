@@ -37,12 +37,13 @@ Browsers block direct API calls from a web page to local network services (CORS 
 
 ### Via HACS (recommended)
 
-1. Open HACS → Integrations
-2. Click **+ Explore & Download Repositories**
-3. Search for **Arr Stack Integration** and install
-4. Restart Home Assistant
-5. Go to **Settings → Devices & Services → + Add Integration**
-6. Search for **Arr Stack** and follow the setup wizard
+1. Open HACS → **Integrations**
+2. Click the **⋮** menu (top right) → **Custom repositories**
+3. Add `https://github.com/martinargalas/arr-stack-integration` — category **Integration**
+4. Click **+ Explore & Download Repositories**, search for **Arr Stack Integration** and install
+5. Restart Home Assistant
+6. Go to **Settings → Devices & Services → + Add Integration**
+7. Search for **Arr Stack** and follow the setup wizard
 
 ### Manual
 
