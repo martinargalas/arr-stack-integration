@@ -16,35 +16,36 @@
   "config": {
     "step": {
       "user": {
-        "title": "Arr Stack — Stahování (1/3)",
-        "description": "Všechna pole jsou volitelná. Nevyplněné služby se v kartě nezobrazí.",
+        "title": "Arr Stack — Downloads (1/3)",
+        "description": "All fields optional. Leave empty to skip that service.",
         "data": {
-          "qbittorrent_url": "qBittorrent URL (volitelné)",
-          "qbittorrent_user": "Uživatelské jméno (volitelné)",
-          "qbittorrent_password": "Heslo (volitelné)",
-          "sabnzbd_url": "SABnzbd URL (volitelné)",
-          "sabnzbd_api_key": "SABnzbd API klíč (volitelné)"
+          "qbittorrent_url": "qBittorrent URL (optional)",
+          "qbittorrent_user": "qBittorrent username (optional)",
+          "qbittorrent_password": "qBittorrent password (optional)",
+          "sabnzbd_url": "SABnzbd URL (optional)",
+          "sabnzbd_api_key": "SABnzbd API key (optional)"
         }
       },
       "media": {
-        "title": "Arr Stack — Správa médií (2/3)",
+        "title": "Arr Stack — Media (2/3)",
+        "description": "URLs must start with http:// or https://",
         "data": {
           "radarr_url": "Radarr URL",
-          "radarr_api_key": "Radarr API klíč",
+          "radarr_api_key": "Radarr API key",
           "sonarr_url": "Sonarr URL",
-          "sonarr_api_key": "Sonarr API klíč"
+          "sonarr_api_key": "Sonarr API key"
         }
       },
       "discovery": {
-        "title": "Arr Stack — Vyhledávání a titulky (3/3)",
-        "description": "After saving, a Home Assistant restart is required for changes to take effect.",
+        "title": "Arr Stack — Discovery & Subtitles (3/3)",
+        "description": "After saving, restart Home Assistant for changes to take effect.",
         "data": {
-          "seerr_url": "Overseerr URL",
-          "seerr_api_key": "Overseerr API klíč",
-          "seerr_family_email": "Rodinný účet — email (volitelné)",
-          "seerr_family_password": "Rodinný účet — heslo (volitelné)",
-          "bazarr_url": "Bazarr URL (volitelné)",
-          "bazarr_api_key": "Bazarr API klíč (volitelné)"
+          "seerr_url": "Overseerr / Jellyseerr URL",
+          "seerr_api_key": "Overseerr / Jellyseerr API key",
+          "seerr_family_email": "Family account email (optional)",
+          "seerr_family_password": "Family account password (optional)",
+          "bazarr_url": "Bazarr URL (optional)",
+          "bazarr_api_key": "Bazarr API key (optional)"
         }
       }
     },
@@ -52,22 +53,29 @@
       "reconfigure_successful": "Settings updated — restart Home Assistant to apply the changes."
     },
     "error": {
-      "cannot_connect": "Nelze se připojit — zkontroluj URL a dostupnost služby",
-      "qbit_bad_credentials": "Špatné přihlašovací údaje qBittorrent",
-      "qbit_login_failed": "Přihlášení do qBittorrent selhalo",
-      "sabnzbd_bad_key": "Neplatný SABnzbd API klíč",
-      "radarr_bad_key": "Neplatný Radarr API klíč",
-      "radarr_error": "Chyba připojení k Radarr",
-      "sonarr_bad_key": "Neplatný Sonarr API klíč",
-      "sonarr_error": "Chyba připojení k Sonarr",
-      "overseerr_bad_key": "Neplatný Overseerr API klíč",
-      "overseerr_error": "Chyba připojení k Overseerr",
-      "seerr_family_bad_credentials": "Špatný email nebo heslo rodinného účtu",
-      "seerr_family_login_failed": "Přihlášení rodinného účtu selhalo",
-      "seerr_family_is_admin": "Rodinný účet má admin práva — použij účet bez admin oprávnění",
-      "bazarr_bad_key": "Neplatný Bazarr API klíč",
-      "bazarr_error": "Chyba připojení k Bazarr",
-      "unknown": "Neočekávaná chyba — zkontroluj logy HA"
+      "invalid_url": "Invalid URL — must start with http:// or https:// (e.g. http://192.168.1.10:7878)",
+      "cannot_connect": "Cannot connect — check the URL and make sure the service is running and reachable from Home Assistant",
+      "timeout": "Connection timed out — the service did not respond. Check the URL and your network",
+      "ssl_error": "SSL error — if using http:// make sure you are not accidentally pointing to an https:// port",
+      "qbit_bad_credentials": "Wrong qBittorrent username or password",
+      "qbit_login_failed": "qBittorrent login failed — check credentials and that the Web UI is enabled in qBittorrent settings",
+      "sabnzbd_bad_key": "Invalid SABnzbd API key — find it in SABnzbd → Config → General → API Key",
+      "radarr_bad_key": "Invalid Radarr API key — find it in Radarr → Settings → General → API Key",
+      "radarr_error": "Radarr returned an unexpected error — check the URL and that Radarr is running",
+      "radarr_wrong_port": "Radarr not found at this address — default port is 7878. Check the URL",
+      "sonarr_bad_key": "Invalid Sonarr API key — find it in Sonarr → Settings → General → API Key",
+      "sonarr_error": "Sonarr returned an unexpected error — check the URL and that Sonarr is running",
+      "sonarr_wrong_port": "Sonarr not found at this address — default port is 8989. Check the URL",
+      "overseerr_bad_key": "Invalid Overseerr/Jellyseerr API key — find it in Settings → General → API Key",
+      "overseerr_error": "Overseerr/Jellyseerr returned an unexpected error — check the URL and that it is running",
+      "overseerr_wrong_port": "Overseerr/Jellyseerr not found at this address — default port is 5055. Check the URL",
+      "seerr_family_bad_credentials": "Wrong family account email or password",
+      "seerr_family_login_failed": "Family account login failed — check the email and password",
+      "seerr_family_is_admin": "The family account has admin permissions — use a non-admin account for the family account field",
+      "bazarr_bad_key": "Invalid Bazarr API key — find it in Bazarr → Settings → General → API Key",
+      "bazarr_error": "Bazarr returned an unexpected error — check the URL and that Bazarr is running",
+      "bazarr_wrong_port": "Bazarr not found at this address — default port is 6767. Check the URL",
+      "unknown": "Unexpected error — check Home Assistant logs (Settings → System → Logs) for details"
     }
   }
 }

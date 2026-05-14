@@ -18,12 +18,33 @@ from .const import (
 )
 
 
-# ── Validační pomocné funkce ─────────────────────────────────────────────────
+# ── Pomocné funkce pro chyby ─────────────────────────────────────────────────
+
+def _url_error(url: str) -> str | None:
+    """Vrátí chybový kód pokud URL chybí schéma nebo je jinak zjevně špatná."""
+    if not url.startswith(("http://", "https://")):
+        return "invalid_url"
+    return None
+
+def _map_exc(e: Exception) -> str:
+    if isinstance(e, aiohttp.InvalidURL):
+        return "invalid_url"
+    if isinstance(e, aiohttp.ClientConnectorError):
+        return "cannot_connect"
+    if isinstance(e, aiohttp.ServerTimeoutError):
+        return "timeout"
+    if isinstance(e, aiohttp.ClientSSLError):
+        return "ssl_error"
+    return "unknown"
+
+
+# ── Validační funkce ─────────────────────────────────────────────────────────
 
 async def _test_qbit(session: aiohttp.ClientSession, url: str, user: str, password: str) -> str | None:
-    """Vrátí None pokud OK nebo URL je prázdná, jinak popis chyby."""
     if not url:
         return None
+    if err := _url_error(url):
+        return err
     try:
         async with session.post(
             f"{url.rstrip('/')}/api/v2/auth/login",
@@ -36,16 +57,15 @@ async def _test_qbit(session: aiohttp.ClientSession, url: str, user: str, passwo
             if text.strip() == "Fails.":
                 return "qbit_bad_credentials"
             return "qbit_login_failed"
-    except aiohttp.ClientConnectorError:
-        return "cannot_connect"
-    except Exception:
-        return "unknown"
+    except Exception as e:
+        return _map_exc(e)
 
 
 async def _test_sabnzbd(session: aiohttp.ClientSession, url: str, key: str) -> str | None:
-    """Vrátí None pokud OK nebo URL je prázdná, jinak popis chyby."""
     if not url:
         return None
+    if err := _url_error(url):
+        return err
     try:
         async with session.get(
             f"{url.rstrip('/')}/api",
@@ -56,15 +76,16 @@ async def _test_sabnzbd(session: aiohttp.ClientSession, url: str, key: str) -> s
                 data = await r.json()
                 if data.get("version"):
                     return None
+            if r.status == 403:
+                return "sabnzbd_bad_key"
             return "sabnzbd_bad_key"
-    except aiohttp.ClientConnectorError:
-        return "cannot_connect"
-    except Exception:
-        return "unknown"
+    except Exception as e:
+        return _map_exc(e)
 
 
 async def _test_arr(session: aiohttp.ClientSession, url: str, key: str, name: str) -> str | None:
-    """Společný test pro Radarr a Sonarr přes /api/v3/system/status."""
+    if err := _url_error(url):
+        return err
     try:
         async with session.get(
             f"{url.rstrip('/')}/api/v3/system/status",
@@ -75,14 +96,16 @@ async def _test_arr(session: aiohttp.ClientSession, url: str, key: str, name: st
                 return None
             if r.status == 401:
                 return f"{name}_bad_key"
+            if r.status == 404:
+                return f"{name}_wrong_port"
             return f"{name}_error"
-    except aiohttp.ClientConnectorError:
-        return "cannot_connect"
-    except Exception:
-        return "unknown"
+    except Exception as e:
+        return _map_exc(e)
 
 
 async def _test_overseerr(session: aiohttp.ClientSession, url: str, key: str) -> str | None:
+    if err := _url_error(url):
+        return err
     try:
         async with session.get(
             f"{url.rstrip('/')}/api/v1/settings/about",
@@ -93,19 +116,18 @@ async def _test_overseerr(session: aiohttp.ClientSession, url: str, key: str) ->
                 return None
             if r.status == 401:
                 return "overseerr_bad_key"
+            if r.status == 404:
+                return "overseerr_wrong_port"
             return "overseerr_error"
-    except aiohttp.ClientConnectorError:
-        return "cannot_connect"
-    except Exception:
-        return "unknown"
+    except Exception as e:
+        return _map_exc(e)
 
 
 async def _test_overseerr_family(
     session: aiohttp.ClientSession, url: str, email: str, password: str
 ) -> str | None:
-    """Ověří přihlášení rodinného účtu a zkontroluje, že nemá admin práva."""
     if not email or not password:
-        return None  # volitelné pole — přeskočit
+        return None
     try:
         async with session.post(
             f"{url.rstrip('/')}/api/v1/auth/local",
@@ -113,25 +135,23 @@ async def _test_overseerr_family(
             headers={"Accept": "application/json"},
             timeout=aiohttp.ClientTimeout(total=8),
         ) as r:
-            if r.status == 403 or r.status == 401:
+            if r.status in (401, 403):
                 return "seerr_family_bad_credentials"
             if r.status != 200:
                 return "seerr_family_login_failed"
             data = await r.json()
-            # permissions: 2 = admin, zkontrolujeme bit
             if data.get("permissions", 0) & 2:
                 return "seerr_family_is_admin"
             return None
-    except aiohttp.ClientConnectorError:
-        return "cannot_connect"
-    except Exception:
-        return "unknown"
+    except Exception as e:
+        return _map_exc(e)
 
 
 async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str) -> str | None:
-    """Volitelný Bazarr — prázdná URL se přeskočí."""
     if not url:
         return None
+    if err := _url_error(url):
+        return err
     try:
         async with session.get(
             f"{url.rstrip('/')}/api/system/status",
@@ -142,11 +162,11 @@ async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str) -> st
                 return None
             if r.status == 401:
                 return "bazarr_bad_key"
+            if r.status == 404:
+                return "bazarr_wrong_port"
             return "bazarr_error"
-    except aiohttp.ClientConnectorError:
-        return "cannot_connect"
-    except Exception:
-        return "unknown"
+    except Exception as e:
+        return _map_exc(e)
 
 
 # ── Config Flow ──────────────────────────────────────────────────────────────
@@ -161,7 +181,6 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._reconfigure_entry = None
 
     async def async_step_reconfigure(self, user_input=None):
-        """Vstupní bod pro přenastavení existující integrace."""
         self._reconfigure_entry = self._get_reconfigure_entry()
         self._data = dict(self._reconfigure_entry.data)
         return await self.async_step_user()
