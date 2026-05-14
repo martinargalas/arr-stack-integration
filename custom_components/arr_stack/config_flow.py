@@ -54,7 +54,7 @@ async def _test_qbit(session: aiohttp.ClientSession, url: str, user: str, passwo
             timeout=aiohttp.ClientTimeout(total=8),
         ) as r:
             text = await r.text()
-            if r.status == 200 or text.strip().lower() in ("ok.", "ok"):
+            if r.status in (200, 204) or text.strip().lower() in ("ok.", "ok"):
                 return None
             if text.strip() == "Fails." or r.status == 403 and "Fails" in text:
                 return "qbit_bad_credentials"
