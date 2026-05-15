@@ -228,8 +228,12 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_SAB_URL):   str,
             vol.Optional(CONF_SAB_KEY):   str,
         })
-        if self._data:
-            schema = self.add_suggested_values_to_schema(schema, self._data)
+        suggested = self._data if self._data else {
+            CONF_QBIT_URL:  "http://192.168.1.x:8080",
+            CONF_QBIT_USER: "admin",
+            CONF_SAB_URL:   "http://192.168.1.x:8080",
+        }
+        schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(
             step_id="user",
             data_schema=schema,
@@ -326,7 +330,10 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_BAZARR_URL):         str,
             vol.Optional(CONF_BAZARR_KEY):         str,
         })
-        suggested = self._data if self._data else {CONF_SEERR_URL: "http://192.168.1.x:5055"}
+        suggested = self._data if self._data else {
+            CONF_SEERR_URL:   "http://192.168.1.x:5055",
+            CONF_BAZARR_URL:  "http://192.168.1.x:6767",
+        }
         schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(
             step_id="discovery",
