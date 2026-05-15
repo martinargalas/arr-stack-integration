@@ -105,13 +105,18 @@ class ArrStackProxyView(HomeAssistantView):
         try:
             return await self._route(request, service, path, method)
         except aiohttp.ClientConnectorError as exc:
+            _LOGGER.error("arr_stack connection error [%s/%s]: %s", service, path, exc)
             return web.json_response({"error": f"Nelze se připojit: {exc}"}, status=503)
         except Exception as exc:  # noqa: BLE001
+            _LOGGER.error("arr_stack error [%s/%s]: %s", service, path, exc)
             return web.json_response({"error": str(exc)}, status=500)
 
     async def _route(
         self, request: web.Request, service: str, path: str, method: str
     ) -> web.Response:
+        debug = bool(request.query.get("_debug"))
+        if debug:
+            _LOGGER.warning("arr_stack → %s/%s [%s]", service, path, method)
         cfg = self._cfg
         http = async_get_clientsession(self._hass)
 
@@ -125,14 +130,12 @@ class ArrStackProxyView(HomeAssistantView):
             await self._qbit_login(qs)
 
             if path == "torrents":
-                async with qs.get(
-                    f"{cfg[CONF_QBIT_URL]}/api/v2/torrents/info?filter=all"
-                ) as r:
-                    return web.Response(
-                        body=await r.read(),
-                        content_type="application/json",
-                        status=r.status,
-                    )
+                url = f"{cfg[CONF_QBIT_URL]}/api/v2/torrents/info?filter=all"
+                if debug: _LOGGER.warning("arr_stack qbit → GET %s", url)
+                async with qs.get(url) as r:
+                    body = await r.read()
+                    if debug: _LOGGER.warning("arr_stack qbit ← status=%s len=%s", r.status, len(body))
+                    return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "transfer":
                 async with qs.get(
@@ -190,14 +193,11 @@ class ArrStackProxyView(HomeAssistantView):
             key = cfg.get(CONF_SAB_KEY, "")
 
             if path == "queue":
-                async with http.get(
-                    f"{base}/api?mode=queue&output=json&apikey={key}"
-                ) as r:
-                    return web.Response(
-                        body=await r.read(),
-                        content_type="application/json",
-                        status=r.status,
-                    )
+                if debug: _LOGGER.warning("arr_stack sabnzbd → GET %s/api?mode=queue (apikey=REDACTED)", base)
+                async with http.get(f"{base}/api?mode=queue&output=json&apikey={key}") as r:
+                    body = await r.read()
+                    if debug: _LOGGER.warning("arr_stack sabnzbd ← status=%s len=%s", r.status, len(body))
+                    return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "history":
                 async with http.get(
@@ -230,12 +230,12 @@ class ArrStackProxyView(HomeAssistantView):
             hdrs = {"X-Api-Key": cfg.get(CONF_RADARR_KEY, "")}
 
             if path == "movies":
-                async with http.get(f"{base}/api/v3/movie", headers=hdrs) as r:
-                    return web.Response(
-                        body=await r.read(),
-                        content_type="application/json",
-                        status=r.status,
-                    )
+                url = f"{base}/api/v3/movie"
+                if debug: _LOGGER.warning("arr_stack radarr → GET %s", url)
+                async with http.get(url, headers=hdrs) as r:
+                    body = await r.read()
+                    if debug: _LOGGER.warning("arr_stack radarr ← status=%s len=%s", r.status, len(body))
+                    return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "profiles":
                 async with http.get(
@@ -335,12 +335,12 @@ class ArrStackProxyView(HomeAssistantView):
                     )
 
             if path == "series":
-                async with http.get(f"{base}/api/v3/series", headers=hdrs) as r:
-                    return web.Response(
-                        body=await r.read(),
-                        content_type="application/json",
-                        status=r.status,
-                    )
+                url = f"{base}/api/v3/series"
+                if debug: _LOGGER.warning("arr_stack sonarr → GET %s", url)
+                async with http.get(url, headers=hdrs) as r:
+                    body = await r.read()
+                    if debug: _LOGGER.warning("arr_stack sonarr ← status=%s len=%s", r.status, len(body))
+                    return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "calendar":
                 # Přepošli query parametry (start, end) z karty
