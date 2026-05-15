@@ -1,7 +1,12 @@
 """HTTP proxy view — přeposílá requesty z karty na lokální služby (server-side, žádný CORS)."""
 import asyncio
+import logging
+from urllib.parse import quote
 import aiohttp
 from aiohttp import web
+import yarl
+
+_LOGGER = logging.getLogger(__name__)
 
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -569,18 +574,13 @@ class ArrStackProxyView(HomeAssistantView):
                     )
 
             if path == "search":
-                query = request.query.get("query", "")
-                page = request.query.get("page", "1")
-                async with http.get(
-                    f"{base}/api/v1/search",
-                    headers=hdrs,
-                    params={"query": query, "page": page},
-                ) as r:
-                    return web.Response(
-                        body=await r.read(),
-                        content_type="application/json",
-                        status=r.status,
-                    )
+                body = await request.json()
+                query = body.get("query", "")
+                page = str(body.get("page", 1))
+                url_str = f"{base}/api/v1/search?query={quote(query, safe='')}&page={page}"
+                search_url = yarl.URL(url_str, encoded=True)
+                async with http.get(search_url, headers=hdrs) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "request" and method == "POST":
                 body = await request.json()
