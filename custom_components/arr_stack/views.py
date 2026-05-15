@@ -334,13 +334,32 @@ class ArrStackProxyView(HomeAssistantView):
                         status=r.status,
                     )
 
-            if path == "series":
+            if path == "series" and method == "GET":
                 url = f"{base}/api/v3/series"
                 if debug: _LOGGER.warning("arr_stack sonarr → GET %s", url)
                 async with http.get(url, headers=hdrs) as r:
                     body = await r.read()
                     if debug: _LOGGER.warning("arr_stack sonarr ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
+
+            if path == "series" and method == "POST":
+                body = await request.json()
+                async with http.post(
+                    f"{base}/api/v3/series",
+                    headers={**hdrs, "Content-Type": "application/json"},
+                    json=body,
+                ) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "lookup" and method == "GET":
+                tvdb_id = request.query.get("tvdbId", "")
+                term = f"tvdb:{tvdb_id}" if tvdb_id else request.query.get("term", "")
+                async with http.get(
+                    f"{base}/api/v3/series/lookup",
+                    headers=hdrs,
+                    params={"term": term},
+                ) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "calendar":
                 # Přepošli query parametry (start, end) z karty
@@ -547,15 +566,40 @@ class ArrStackProxyView(HomeAssistantView):
                 ) as r:
                     return web.json_response({"ok": r.status in (200, 204)})
 
+            if path.startswith("request/") and method == "PUT":
+                req_id = path.split("/", 1)[1]
+                body = await request.json()
+                async with http.put(
+                    f"{base}/api/v1/request/{req_id}",
+                    headers={**hdrs, "Content-Type": "application/json"},
+                    json=body,
+                ) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "approve" and method == "POST":
                 body = await request.json()
                 req_id = body.get("requestId")
+                server_settings = {k: v for k, v in body.items() if k != "requestId" and v is not None}
+                # Step 1: update request with server settings if provided
+                if server_settings:
+                    _LOGGER.warning("arr_stack approve → updating requestId=%s settings=%s", req_id, server_settings)
+                    async with http.put(
+                        f"{base}/api/v1/request/{req_id}",
+                        headers={**hdrs, "Content-Type": "application/json"},
+                        json=server_settings,
+                    ) as r_put:
+                        put_status = r_put.status
+                        _LOGGER.warning("arr_stack approve → PUT status=%s", put_status)
+                # Step 2: approve
                 async with http.post(
                     f"{base}/api/v1/request/{req_id}/approve",
-                    headers=hdrs,
+                    headers={**hdrs, "Content-Type": "application/json"},
+                    json={},
                 ) as r:
+                    resp_body = await r.read()
+                    _LOGGER.warning("arr_stack approve ← status=%s body=%s", r.status, resp_body[:300])
                     return web.Response(
-                        body=await r.read(),
+                        body=resp_body,
                         content_type="application/json",
                         status=r.status,
                     )
