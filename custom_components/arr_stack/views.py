@@ -139,6 +139,16 @@ class ArrStackProxyView(HomeAssistantView):
                         status=r.status,
                     )
 
+            if path == "maindata":
+                async with qs.get(
+                    f"{cfg[CONF_QBIT_URL]}/api/v2/sync/maindata"
+                ) as r:
+                    return web.Response(
+                        body=await r.read(),
+                        content_type="application/json",
+                        status=r.status,
+                    )
+
             if path == "action" and method == "POST":
                 body = await request.json()
                 action = body.get("action", "")
@@ -551,6 +561,20 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.post(
                     f"{base}/api/v1/request/{req_id}/decline",
                     headers=hdrs,
+                ) as r:
+                    return web.Response(
+                        body=await r.read(),
+                        content_type="application/json",
+                        status=r.status,
+                    )
+
+            if path == "search":
+                query = request.query.get("query", "")
+                page = request.query.get("page", "1")
+                async with http.get(
+                    f"{base}/api/v1/search",
+                    headers=hdrs,
+                    params={"query": query, "page": page},
                 ) as r:
                     return web.Response(
                         body=await r.read(),
