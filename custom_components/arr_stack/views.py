@@ -201,7 +201,7 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "history":
                 async with http.get(
-                    f"{base}/api?mode=history&output=json&limit=20&apikey={key}"
+                    f"{base}/api?mode=history&output=json&limit=50&apikey={key}"
                 ) as r:
                     return web.Response(
                         body=await r.read(),
