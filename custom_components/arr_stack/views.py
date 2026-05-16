@@ -294,10 +294,11 @@ class ArrStackProxyView(HomeAssistantView):
             if path.startswith("movie/") and method == "DELETE":
                 movie_id = path.split("/", 1)[1]
                 delete_files = request.query.get("deleteFiles", "false")
+                add_exclusion = request.query.get("addExclusion", "false")
                 async with http.delete(
                     f"{base}/api/v3/movie/{movie_id}",
                     headers=hdrs,
-                    params={"deleteFiles": delete_files, "addImportListExclusion": "false"},
+                    params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
                 ) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
@@ -396,14 +397,24 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(f"{base}/api/v3/history/series", headers=hdrs, params={"seriesId": series_id, "pageSize": "200"}) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path == "episodefiles" and method == "GET":
+                series_id = request.query.get("seriesId", "")
+                async with http.get(f"{base}/api/v3/episodefile", headers=hdrs, params={"seriesId": series_id}) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "recentimports" and method == "GET":
+                async with http.get(f"{base}/api/v3/history", headers=hdrs, params={"pageSize": "100", "sortKey": "date", "sortDir": "desc"}) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             # Smaže seriál z knihovny
             if path.startswith("series/") and method == "DELETE":
                 series_id = path.split("/", 1)[1]
                 delete_files = request.query.get("deleteFiles", "false")
+                add_exclusion = request.query.get("addExclusion", "false")
                 async with http.delete(
                     f"{base}/api/v3/series/{series_id}",
                     headers=hdrs,
-                    params={"deleteFiles": delete_files},
+                    params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
                 ) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
@@ -684,6 +695,19 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "movies":
                 async with http.get(
                     f"{base}/api/movies?start=0&length=500", headers=hdrs
+                ) as r:
+                    return web.Response(
+                        body=await r.read(),
+                        content_type="application/json",
+                        status=r.status,
+                    )
+
+            if path == "episodes":
+                series_id = request.query.get("seriesId", "")
+                async with http.get(
+                    f"{base}/api/episodes",
+                    headers=hdrs,
+                    params={"seriesid[]": series_id, "start": "0", "length": "500"},
                 ) as r:
                     return web.Response(
                         body=await r.read(),
