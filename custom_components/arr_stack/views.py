@@ -209,6 +209,10 @@ class ArrStackProxyView(HomeAssistantView):
                         status=r.status,
                     )
 
+            if path == "status":
+                async with http.get(f"{base}/api?mode=status&output=json&apikey={key}") as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "action" and method == "POST":
                 body = await request.json()
                 mode = body.get("mode", "")
@@ -714,5 +718,20 @@ class ArrStackProxyView(HomeAssistantView):
                         content_type="application/json",
                         status=r.status,
                     )
+
+        # ════════════════════════════════════════════
+        # System
+        # ════════════════════════════════════════════
+        elif service == "system":
+            if path == "publicip":
+                for url in ["https://api.ipify.org", "https://checkip.amazonaws.com"]:
+                    try:
+                        async with http.get(url, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                            ip = (await r.text()).strip()
+                            if ip:
+                                return web.json_response({"ip": ip})
+                    except Exception:
+                        continue
+                return web.json_response({"ip": None})
 
         return web.json_response({"error": "unknown service or path"}, status=404)
