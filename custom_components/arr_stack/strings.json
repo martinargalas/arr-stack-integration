@@ -1,18 +1,4 @@
 {
-  "issues": {
-    "restart_required": {
-      "title": "Arr Stack — Restart required",
-      "description": "Arr Stack settings were changed. Restart Home Assistant to apply the changes.",
-      "fix_flow": {
-        "step": {
-          "confirm": {
-            "title": "Restart Home Assistant",
-            "description": "Click submit to restart Home Assistant and apply the Arr Stack changes."
-          }
-        }
-      }
-    }
-  },
   "config": {
     "step": {
       "user": {
