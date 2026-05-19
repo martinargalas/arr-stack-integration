@@ -251,6 +251,10 @@ class ArrStackProxyView(HomeAssistantView):
                         status=r.status,
                     )
 
+            if path == "tags":
+                async with http.get(f"{base}/api/v3/tag", headers=hdrs) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "queue":
                 async with http.get(
                     f"{base}/api/v3/queue?includeMovie=false&pageSize=100",
@@ -338,6 +342,10 @@ class ArrStackProxyView(HomeAssistantView):
                         content_type="application/json",
                         status=r.status,
                     )
+
+            if path == "tags":
+                async with http.get(f"{base}/api/v3/tag", headers=hdrs) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "series" and method == "GET":
                 url = f"{base}/api/v3/series"
