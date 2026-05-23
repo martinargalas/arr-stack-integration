@@ -2,7 +2,7 @@
 
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![version](https://img.shields.io/github/v/release/martinargalas/arr-stack-integration?cacheSeconds=0)](https://github.com/martinargalas/arr-stack-integration/releases)
-[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2023.x%2B-brightgreen.svg)](https://www.home-assistant.io)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.1%2B-brightgreen.svg)](https://www.home-assistant.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/discord/1503764189057908798?logo=discord&label=chat&color=5865F2&logoColor=white)](https://discord.gg/SUfDr52G)
 
@@ -26,10 +26,12 @@ Browsers block direct API calls from a web page to local network services (CORS 
 |---------|------|----------|
 | Radarr | Movie library management | ✅ Yes |
 | Sonarr | TV show library management | ✅ Yes |
-| Seerr | Media discovery & requests | ✅ Yes |
+| Overseerr / Jellyseerr | Media discovery & requests | ✅ Yes |
 | qBittorrent | Torrent download client | Optional |
 | SABnzbd | Usenet download client | Optional |
 | Bazarr | Subtitle management | Optional |
+| Plex | Stream monitoring & playback control | Optional |
+| Tautulli | Watch history & statistics | Optional |
 
 ---
 
@@ -52,74 +54,62 @@ Browsers block direct API calls from a web page to local network services (CORS 
 3. Add the integration via **Settings → Devices & Services**
 
 > ⚠️ After any change to the integration settings, **restart Home Assistant** for changes to take effect.
->
-> When settings are changed, a notification appears in **Settings → Repairs** with a one-click restart option.
 
 ---
 
-## Minimum Configuration
+## Setup Wizard
 
-Only three services are required. Leave qBittorrent, SABnzbd, and Bazarr fields empty if you don't use them — they will simply not appear in the card.
+The integration is configured via a 4-step wizard.
 
 **Step 1 — Downloads** *(all optional)*
-- Leave blank if you don't use qBittorrent or SABnzbd
 
-**Step 2 — Media management** *(required)*
-- Radarr URL + API key
-- Sonarr URL + API key
+| Field | Example |
+|-------|---------|
+| qBittorrent URL | `http://192.168.1.10:8080` |
+| qBittorrent username | `admin` |
+| qBittorrent password | `••••` |
+| SABnzbd URL | `http://192.168.1.10:8080` |
+| SABnzbd API key | `••••` |
 
-**Step 3 — Discovery** *(Seerr required, rest optional)*
-- Seerr URL + API key
-- Family account email + password *(optional — for non-admin household users)*
-- Bazarr URL + API key *(optional — for subtitle status badges)*
+**Step 2 — Media Management** *(required)*
 
----
+| Field | Example |
+|-------|---------|
+| Radarr URL | `http://192.168.1.10:7878` |
+| Radarr API key | `••••` |
+| Sonarr URL | `http://192.168.1.10:8989` |
+| Sonarr API key | `••••` |
 
-## Full Configuration
+**Step 3 — Discovery & Subtitles** *(Overseerr/Jellyseerr required, rest optional)*
 
-### Step 1 — Downloads
-
-| Field | Example | Description |
-|-------|---------|-------------|
-| qBittorrent URL | `http://192.168.1.10:8088` | Leave empty to disable |
-| qBittorrent username | `admin` | Leave empty to disable |
-| qBittorrent password | `••••` | Leave empty to disable |
-| SABnzbd URL | `http://192.168.1.10:8080` | Leave empty to disable |
-| SABnzbd API key | `••••` | Leave empty to disable |
-
-### Step 2 — Media Management
-
-| Field | Example | Description |
-|-------|---------|-------------|
-| Radarr URL | `http://192.168.1.10:7878` | Required |
-| Radarr API key | `••••` | Required |
-| Sonarr URL | `http://192.168.1.10:8989` | Required |
-| Sonarr API key | `••••` | Required |
-
-### Step 3 — Discovery & Subtitles
-
-| Field | Example | Description |
-|-------|---------|-------------|
-| Seerr URL | `http://192.168.1.10:5055` | Required (Jellyseerr also supported) |
-| Seerr API key | `••••` | Required |
-| Family account email | `user@example.com` | Optional — non-admin Overseerr/Jellyseerr account for household users |
-| Family account password | `••••` | Optional — password for the Overseerr/Jellyseerr account above |
+| Field | Example | Notes |
+|-------|---------|-------|
+| Overseerr / Jellyseerr URL | `http://192.168.1.10:5055` | Required |
+| Overseerr / Jellyseerr API key | `••••` | Required |
+| Family account email | `user@example.com` | Optional — non-admin account for household users |
+| Family account password | `••••` | Optional |
 | Bazarr URL | `http://192.168.1.10:6767` | Optional |
 | Bazarr API key | `••••` | Optional |
+
+**Step 4 — Plex & Tautulli** *(both optional)*
+
+| Field | Notes |
+|-------|-------|
+| Plex | Authenticate via the Plex login link — enables stream monitoring and playback control |
+| Tautulli URL | `http://192.168.1.10:8181` |
+| Tautulli API key | Found in Tautulli → Settings → Web Interface → API Key |
 
 ---
 
 ## Family Account
 
-If you configure a family account (non-admin Seerr user), the card will use that account for media requests when the logged-in HA user is not an admin. This allows household members to request media without admin privileges.
+If you configure a family account (non-admin Overseerr/Jellyseerr user), the card will use that account for media requests when the logged-in HA user is not an admin. This allows household members to request media without admin privileges.
 
 ---
 
 ## Sensors & entities
 
 This integration currently does not expose any Home Assistant sensors, entities, or devices. It acts purely as a proxy — all data is fetched on demand by the card and displayed directly.
-
-Native HA sensors (download progress, queue status, library counts, etc.) are planned for a future release.
 
 ---
 

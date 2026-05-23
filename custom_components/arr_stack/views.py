@@ -20,6 +20,8 @@ from .const import (
     CONF_SEERR_URL, CONF_SEERR_KEY,
     CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS,
     CONF_BAZARR_URL, CONF_BAZARR_KEY,
+    CONF_PLEX_TOKEN, CONF_PLEX_URL, PLEX_CLIENT_ID,
+    CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
 )
 
 # qBit v5 → v4 fallback endpoint mapa
@@ -734,6 +736,152 @@ class ArrStackProxyView(HomeAssistantView):
                         content_type="application/json",
                         status=r.status,
                     )
+
+        # ════════════════════════════════════════════
+        # Plex (volitelný)
+        # ════════════════════════════════════════════
+        elif service == "plex":
+            token = cfg.get(CONF_PLEX_TOKEN, "")
+            base  = cfg.get(CONF_PLEX_URL, "").rstrip("/")
+            if not token or not base:
+                return web.json_response({"error": "Plex not configured"}, status=503)
+
+            plex_hdrs = {
+                "X-Plex-Token":             token,
+                "X-Plex-Client-Identifier": PLEX_CLIENT_ID,
+                "Accept":                   "application/json",
+            }
+
+            # GET plex/clients → /clients (registered players with ports)
+            if path == "clients" and method == "GET":
+                async with http.get(
+                    f"{base}/clients",
+                    headers=plex_hdrs,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    return web.Response(
+                        body=await r.read(),
+                        content_type="application/json",
+                        status=r.status,
+                    )
+
+            # GET plex/sessions → /status/sessions
+            if path == "sessions" and method == "GET":
+                async with http.get(
+                    f"{base}/status/sessions",
+                    headers=plex_hdrs,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    return web.Response(
+                        body=await r.read(),
+                        content_type="application/json",
+                        status=r.status,
+                    )
+
+            # POST plex/player → player control (play/pause/seek/stop)
+            # Body: { action, machineIdentifier, offset? (ms), playerUrl? }
+            if path == "player" and method == "POST":
+                body       = await request.json()
+                action     = body.get("action", "")   # play | pause | stop | seekTo
+                machine_id = body.get("machineIdentifier", "")
+                offset     = body.get("offset")        # ms, only for seekTo
+                player_url = (body.get("playerUrl") or "").rstrip("/")
+
+                plex_actions = {"play", "pause", "stop", "seekTo"}
+                if action not in plex_actions:
+                    return web.json_response({"error": "unknown action"}, status=400)
+
+                params: dict = {"commandID": "1"}
+                if action == "seekTo" and offset is not None:
+                    params["offset"] = str(int(offset))
+                    params["type"]   = "video"
+
+                if player_url:
+                    # Direct Plex Companion — talk directly to client HTTP server
+                    direct_hdrs = {
+                        "X-Plex-Client-Identifier":        PLEX_CLIENT_ID,
+                        "X-Plex-Target-Client-Identifier": machine_id,
+                        "X-Plex-Product":                  "Arr Stack Card",
+                        "X-Plex-Version":                  "1.0.0",
+                        "X-Plex-Platform":                 "Web",
+                        "X-Plex-Platform-Version":         "1.0",
+                        "X-Plex-Device":                   "Home Assistant",
+                        "X-Plex-Device-Name":              "Arr Stack Card",
+                        "X-Plex-Provides":                 "controller",
+                        "Accept":                          "application/json",
+                    }
+                    # Subscribe first — required before player accepts commands
+                    try:
+                        async with http.get(
+                            f"{player_url}/player/timeline/subscribe",
+                            headers=direct_hdrs,
+                            params={"protocol": "http", "port": "32400", "commandID": "0"},
+                            timeout=aiohttp.ClientTimeout(total=5),
+                        ) as sub_r:
+                            await sub_r.read()
+                    except Exception:
+                        pass
+                    async with http.get(
+                        f"{player_url}/player/playback/{action}",
+                        headers=direct_hdrs,
+                        params=params,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as r:
+                        await r.read()
+                        return web.json_response({"ok": r.status < 400, "status": r.status}, status=200)
+                else:
+                    # Server-relayed via Plex Companion proxy
+                    params["X-Plex-Token"] = token
+                    target_hdrs = {
+                        **plex_hdrs,
+                        "X-Plex-Target-Client-Identifier": machine_id,
+                    }
+                    async with http.get(
+                        f"{base}/player/proxy/playback/{action}",
+                        headers=target_hdrs,
+                        params=params,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as r:
+                        await r.read()
+                        return web.json_response({"ok": r.status < 400, "status": r.status}, status=200)
+
+        # ════════════════════════════════════════════
+        # Tautulli
+        # ════════════════════════════════════════════
+        elif service == "tautulli":
+            tautulli_url = cfg.get(CONF_TAUTULLI_URL, "").rstrip("/")
+            tautulli_key = cfg.get(CONF_TAUTULLI_KEY, "")
+            if not tautulli_url or not tautulli_key:
+                return web.json_response({"error": "Tautulli not configured"}, status=503)
+
+            # ── sharing_ack — persisted via HA Store (not forwarded to Tautulli)
+            if path == "sharing_ack":
+                from homeassistant.helpers.storage import Store  # noqa: PLC0415
+                store = Store(self._hass, 1, "arr_stack.sharing_ack")
+                if method == "GET":
+                    data = await store.async_load() or {}
+                    return web.json_response(data)
+                elif method == "POST":
+                    body = await request.json()
+                    await store.async_save(body)
+                    return web.json_response({"ok": True})
+
+            # path is the Tautulli cmd, e.g. "get_activity", "get_history"
+            # query params from the card are forwarded alongside apikey + cmd
+            params = dict(request.rel_url.query)
+            params["apikey"] = tautulli_key
+            params["cmd"]    = path
+
+            async with http.get(
+                f"{tautulli_url}/api/v2",
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                return web.Response(
+                    body=await r.read(),
+                    content_type="application/json",
+                    status=r.status,
+                )
 
         # ════════════════════════════════════════════
         # System

@@ -20,3 +20,11 @@ CONF_SEERR_FAMILY_PASS  = "seerr_family_password"
 
 CONF_BAZARR_URL = "bazarr_url"
 CONF_BAZARR_KEY = "bazarr_api_key"
+
+CONF_PLEX_TOKEN = "plex_token"
+CONF_PLEX_URL   = "plex_url"
+
+CONF_TAUTULLI_URL = "tautulli_url"
+CONF_TAUTULLI_KEY = "tautulli_api_key"
+
+PLEX_CLIENT_ID  = "arr-stack-card"

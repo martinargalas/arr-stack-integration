@@ -1,4 +1,4 @@
-"""Config flow — 3 kroky s ověřením přístupu ke každé službě."""
+"""Config flow — 4 kroky s ověřením přístupu ke každé službě."""
 import aiohttp
 import voluptuous as vol
 
@@ -15,6 +15,8 @@ from .const import (
     CONF_SEERR_URL, CONF_SEERR_KEY,
     CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS,
     CONF_BAZARR_URL, CONF_BAZARR_KEY,
+    CONF_PLEX_TOKEN, CONF_PLEX_URL, PLEX_CLIENT_ID,
+    CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
 )
 
 
@@ -153,6 +155,31 @@ async def _test_overseerr_family(
         return _map_exc(e)
 
 
+async def _test_tautulli(session: aiohttp.ClientSession, url: str, key: str) -> str | None:
+    if not url:
+        return None
+    if err := _url_error(url):
+        return err
+    try:
+        async with session.get(
+            f"{url.rstrip('/')}/api/v2",
+            params={"apikey": key, "cmd": "get_activity"},
+            timeout=aiohttp.ClientTimeout(total=8),
+        ) as r:
+            if r.status == 200:
+                data = await r.json()
+                if data.get("response", {}).get("result") == "success":
+                    return None
+                return "tautulli_bad_key"
+            if r.status in (401, 403):
+                return "tautulli_bad_key"
+            if r.status == 404:
+                return "tautulli_wrong_port"
+            return "tautulli_error"
+    except Exception as e:
+        return _map_exc(e)
+
+
 async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str) -> str | None:
     if not url:
         return None
@@ -185,6 +212,8 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self):
         self._data: dict = {}
         self._reconfigure_entry = None
+        self._plex_pin_id: int | None = None
+        self._plex_pin_code: str | None = None
 
     async def async_step_reconfigure(self, user_input=None):
         self._reconfigure_entry = self._get_reconfigure_entry()
@@ -238,7 +267,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=schema,
             errors=errors,
-            description_placeholders={"step": "1/3 — Stahování (volitelné)"},
+            last_step=False,
         )
 
     # ── Krok 2: Radarr + Sonarr (povinné) ────────────────────────────────────
@@ -276,7 +305,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="media",
             data_schema=schema,
             errors=errors,
-            description_placeholders={"step": "2/3 — Správa médií"},
+            last_step=False,
         )
 
     # ── Krok 3: Overseerr (povinný) + family účet + Bazarr (volitelné) ───────
@@ -312,15 +341,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._data.update(user_input)
                 for key in [CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS, CONF_BAZARR_URL, CONF_BAZARR_KEY]:
                     self._data[key] = user_input.get(key, "")
-                if self._reconfigure_entry is not None:
-                    self.hass.config_entries.async_update_entry(
-                        self._reconfigure_entry, data=dict(self._data)
-                    )
-                    await self.hass.config_entries.async_reload(
-                        self._reconfigure_entry.entry_id
-                    )
-                    return self.async_abort(reason="reconfigure_successful")
-                return self.async_create_entry(title="Arr Stack", data=self._data)
+                return await self.async_step_plex()
 
         schema = vol.Schema({
             vol.Required(CONF_SEERR_URL):          str,
@@ -339,5 +360,186 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="discovery",
             data_schema=schema,
             errors=errors,
-            description_placeholders={"step": "3/3 — Vyhledávání a titulky"},
+            last_step=False,
         )
+
+    # ── Krok 4: Plex (volitelné) + Tautulli (volitelné) ──────────────────────
+
+    async def async_step_plex(self, user_input=None):
+        errors = {}
+
+        if user_input is not None:
+            session = async_get_clientsession(self.hass)
+            tautulli_url = user_input.get(CONF_TAUTULLI_URL, "")
+            tautulli_key = user_input.get(CONF_TAUTULLI_KEY, "")
+
+            err = await _test_tautulli(session, tautulli_url, tautulli_key)
+            if err:
+                errors[CONF_TAUTULLI_URL] = err
+
+            if not errors:
+                if user_input.get("skip_plex"):
+                    self._data[CONF_PLEX_TOKEN]   = ""
+                    self._data[CONF_PLEX_URL]     = ""
+                    self._data[CONF_TAUTULLI_URL] = tautulli_url
+                    self._data[CONF_TAUTULLI_KEY] = tautulli_key
+                    return self._finish_flow()
+
+                if self._plex_pin_id:
+                    token, server_url = await self._poll_plex_pin()
+                    if token:
+                        self._data[CONF_PLEX_TOKEN] = token
+                        self._data[CONF_PLEX_URL]   = server_url or ""
+                    elif self._data.get(CONF_PLEX_TOKEN):
+                        # Keep existing token — user didn't re-authenticate
+                        pass
+                    else:
+                        errors["base"] = "plex_not_authenticated"
+                        self._plex_pin_id = None
+                    if not errors:
+                        self._data[CONF_TAUTULLI_URL] = tautulli_url
+                        self._data[CONF_TAUTULLI_KEY] = tautulli_key
+                        return self._finish_flow()
+
+        existing_token = self._data.get(CONF_PLEX_TOKEN, "")
+        has_plex = bool(existing_token)
+        username = ""
+        if has_plex:
+            username = await self._get_plex_username(existing_token)
+
+        try:
+            pin_id, pin_code = await self._create_plex_pin()
+            self._plex_pin_id   = pin_id
+            self._plex_pin_code = pin_code
+            auth_url = (
+                f"https://app.plex.tv/auth#?clientID={PLEX_CLIENT_ID}"
+                f"&code={pin_code}"
+                f"&context%5Bdevice%5D%5Bproduct%5D=Arr+Stack+Card"
+            )
+        except Exception:
+            errors["base"] = "plex_pin_failed"
+            auth_url = "https://plex.tv"
+
+        auth_steps = (
+            f"1. [Open Plex authentication]({auth_url})\n"
+            f"2. Sign in and authorise **Arr Stack Card**\n"
+            f"3. Return here and click **Submit**"
+        )
+        if has_plex and username:
+            plex_section = (
+                f"✓ Plex connected as **{username}**\n\n"
+                f"To re-configure Plex:\n{auth_steps}"
+            )
+        else:
+            plex_section = (
+                f"{auth_steps}\n\n"
+                f"Or check **Skip Plex setup** below to skip."
+            )
+
+        # skip_plex first so it renders directly under the Plex description section
+        schema_fields = {}
+        if not has_plex:
+            schema_fields[vol.Optional("skip_plex", default=False)] = bool
+        schema_fields[vol.Optional(CONF_TAUTULLI_URL)] = str
+        schema_fields[vol.Optional(CONF_TAUTULLI_KEY)] = str
+        schema = vol.Schema(schema_fields)
+        ui = user_input or {}
+        suggested = {
+            CONF_TAUTULLI_URL: ui.get(CONF_TAUTULLI_URL) or self._data.get(CONF_TAUTULLI_URL, ""),
+            CONF_TAUTULLI_KEY: ui.get(CONF_TAUTULLI_KEY) or self._data.get(CONF_TAUTULLI_KEY, ""),
+        }
+        schema = self.add_suggested_values_to_schema(schema, suggested)
+        return self.async_show_form(
+            step_id="plex",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"plex_section": plex_section},
+        )
+
+    def _finish_flow(self):
+        if self._reconfigure_entry is not None:
+            self.hass.config_entries.async_update_entry(
+                self._reconfigure_entry, data=dict(self._data)
+            )
+            self.hass.async_create_task(
+                self.hass.config_entries.async_reload(self._reconfigure_entry.entry_id)
+            )
+            return self.async_abort(reason="reconfigure_successful")
+        return self.async_create_entry(title="Arr Stack", data=self._data)
+
+    async def _create_plex_pin(self) -> tuple[int, str]:
+        session = async_get_clientsession(self.hass)
+        headers = {
+            "X-Plex-Client-Identifier": PLEX_CLIENT_ID,
+            "X-Plex-Product":           "Arr Stack Card",
+            "Accept":                   "application/json",
+        }
+        async with session.post(
+            "https://plex.tv/api/v2/pins",
+            headers=headers,
+            data={"strong": "true"},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as r:
+            data = await r.json()
+            return int(data["id"]), str(data["code"])
+
+    async def _poll_plex_pin(self) -> tuple[str | None, str | None]:
+        session = async_get_clientsession(self.hass)
+        headers = {
+            "X-Plex-Client-Identifier": PLEX_CLIENT_ID,
+            "Accept":                   "application/json",
+        }
+        async with session.get(
+            f"https://plex.tv/api/v2/pins/{self._plex_pin_id}",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as r:
+            data = await r.json()
+            token = data.get("authToken")
+            if not token:
+                return None, None
+            server_url = await self._get_plex_server(token)
+            return token, server_url
+
+    async def _get_plex_username(self, token: str) -> str:
+        session = async_get_clientsession(self.hass)
+        try:
+            async with session.get(
+                "https://plex.tv/api/v2/user",
+                headers={
+                    "X-Plex-Token":             token,
+                    "X-Plex-Client-Identifier": PLEX_CLIENT_ID,
+                    "Accept":                   "application/json",
+                },
+                timeout=aiohttp.ClientTimeout(total=8),
+            ) as r:
+                data = await r.json()
+                return data.get("username") or data.get("title") or ""
+        except Exception:
+            return ""
+
+    async def _get_plex_server(self, token: str) -> str:
+        session = async_get_clientsession(self.hass)
+        headers = {
+            "X-Plex-Token":             token,
+            "X-Plex-Client-Identifier": PLEX_CLIENT_ID,
+            "Accept":                   "application/json",
+        }
+        try:
+            async with session.get(
+                "https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=0&includeIPv6=0",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                resources = await r.json()
+                for res in resources:
+                    if res.get("product") == "Plex Media Server":
+                        conns = res.get("connections", [])
+                        local = [c for c in conns if c.get("local") and not c.get("relay")]
+                        if local:
+                            return local[0]["uri"]
+                        if conns:
+                            return conns[0]["uri"]
+        except Exception:
+            pass
+        return ""
