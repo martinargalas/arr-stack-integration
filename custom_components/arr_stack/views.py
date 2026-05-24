@@ -16,7 +16,9 @@ from .const import (
     CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
     CONF_SAB_URL, CONF_SAB_KEY,
     CONF_RADARR_URL, CONF_RADARR_KEY,
+    CONF_RADARR2_URL, CONF_RADARR2_KEY,
     CONF_SONARR_URL, CONF_SONARR_KEY,
+    CONF_SONARR2_URL, CONF_SONARR2_KEY,
     CONF_SEERR_URL, CONF_SEERR_KEY,
     CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS,
     CONF_BAZARR_URL, CONF_BAZARR_KEY,
@@ -441,10 +443,124 @@ class ArrStackProxyView(HomeAssistantView):
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
         # ════════════════════════════════════════════
+        # Radarr 2
+        # ════════════════════════════════════════════
+        elif service == "radarr2":
+            if not cfg.get(CONF_RADARR2_URL):
+                return web.json_response([], status=200)
+            base = cfg.get(CONF_RADARR2_URL, "")
+            hdrs = {"X-Api-Key": cfg.get(CONF_RADARR2_KEY, "")}
+
+            if path == "movies":
+                url = f"{base}/api/v3/movie"
+                if debug: _LOGGER.warning("arr_stack radarr2 → GET %s", url)
+                async with http.get(url, headers=hdrs) as r:
+                    body = await r.read()
+                    if debug: _LOGGER.warning("arr_stack radarr2 ← status=%s len=%s", r.status, len(body))
+                    return web.Response(body=body, content_type="application/json", status=r.status)
+
+            if path == "profiles":
+                async with http.get(f"{base}/api/v3/qualityprofile", headers=hdrs) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "tags":
+                async with http.get(f"{base}/api/v3/tag", headers=hdrs) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "rootfolders":
+                async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "queue":
+                async with http.get(f"{base}/api/v3/queue?includeMovie=false&pageSize=100", headers=hdrs) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "release" and method == "GET":
+                movie_id = request.query.get("movieId", "")
+                if not movie_id:
+                    return web.json_response({"error": "movieId required"}, status=400)
+                timeout = aiohttp.ClientTimeout(total=120)
+                async with http.get(f"{base}/api/v3/release", headers=hdrs, params={"movieId": movie_id}, timeout=timeout) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "movie" and method == "POST":
+                body = await request.json()
+                async with http.post(f"{base}/api/v3/movie", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path.startswith("movie/") and method == "DELETE":
+                movie_id = path.split("/", 1)[1]
+                delete_files = request.query.get("deleteFiles", "false")
+                add_exclusion = request.query.get("addExclusion", "false")
+                async with http.delete(
+                    f"{base}/api/v3/movie/{movie_id}",
+                    headers=hdrs,
+                    params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
+                ) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "release" and method == "POST":
+                body = await request.json()
+                async with http.post(f"{base}/api/v3/release", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "history" and method == "GET":
+                movie_id = request.query.get("movieId", "")
+                async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+        # ════════════════════════════════════════════
+        # Sonarr 4K
+        # ════════════════════════════════════════════
+        elif service == "sonarr2":
+            if not cfg.get(CONF_SONARR2_URL):
+                return web.json_response([], status=200)
+            base = cfg.get(CONF_SONARR2_URL, "")
+            hdrs = {"X-Api-Key": cfg.get(CONF_SONARR2_KEY, "")}
+
+            if path == "profiles":
+                async with http.get(f"{base}/api/v3/qualityprofile", headers=hdrs) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "tags":
+                async with http.get(f"{base}/api/v3/tag", headers=hdrs) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "rootfolders":
+                async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "series" and method == "GET":
+                url = f"{base}/api/v3/series"
+                if debug: _LOGGER.warning("arr_stack sonarr2 → GET %s", url)
+                async with http.get(url, headers=hdrs) as r:
+                    body = await r.read()
+                    if debug: _LOGGER.warning("arr_stack sonarr2 ← status=%s len=%s", r.status, len(body))
+                    return web.Response(body=body, content_type="application/json", status=r.status)
+
+            if path == "release" and method == "GET":
+                timeout = aiohttp.ClientTimeout(total=120)
+                params = {k: v for k, v in request.query.items()}
+                async with http.get(f"{base}/api/v3/release", headers=hdrs, params=params, timeout=timeout) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "release" and method == "POST":
+                body = await request.json()
+                async with http.post(f"{base}/api/v3/release", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "history" and method == "GET":
+                series_id = request.query.get("seriesId", "")
+                async with http.get(f"{base}/api/v3/history/series", headers=hdrs, params={"seriesId": series_id, "pageSize": "200"}) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+        # ════════════════════════════════════════════
         # Overseerr
         # ════════════════════════════════════════════
         elif service == "overseerr":
             base = cfg.get(CONF_SEERR_URL, "")
+            if not base:
+                return web.json_response([], status=200)
             hdrs = {
                 "X-Api-Key": cfg.get(CONF_SEERR_KEY, ""),
                 "Accept": "application/json",

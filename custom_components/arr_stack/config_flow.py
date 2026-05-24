@@ -1,4 +1,4 @@
-"""Config flow — 4 kroky s ověřením přístupu ke každé službě."""
+"""Config flow — 5 kroků s ověřením přístupu ke každé službě."""
 import aiohttp
 import voluptuous as vol
 
@@ -11,7 +11,9 @@ from .const import (
     CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
     CONF_SAB_URL, CONF_SAB_KEY,
     CONF_RADARR_URL, CONF_RADARR_KEY,
+    CONF_RADARR2_URL, CONF_RADARR2_KEY,
     CONF_SONARR_URL, CONF_SONARR_KEY,
+    CONF_SONARR2_URL, CONF_SONARR2_KEY,
     CONF_SEERR_URL, CONF_SEERR_KEY,
     CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS,
     CONF_BAZARR_URL, CONF_BAZARR_KEY,
@@ -288,7 +290,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not errors:
                 self._data.update(user_input)
-                return await self.async_step_discovery()
+                return await self.async_step_quality()
 
         schema = vol.Schema({
             vol.Required(CONF_RADARR_URL): str,
@@ -308,44 +310,96 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=False,
         )
 
-    # ── Krok 3: Overseerr (povinný) + family účet + Bazarr (volitelné) ───────
+    # ── Krok 3: Radarr 4K + Sonarr 4K (volitelné) ────────────────────────────
+
+    async def async_step_quality(self, user_input=None):
+        errors = {}
+
+        if user_input is not None:
+            session = async_get_clientsession(self.hass)
+
+            radarr4k_url = user_input.get(CONF_RADARR2_URL, "").strip()
+            radarr4k_key = user_input.get(CONF_RADARR2_KEY, "").strip()
+            sonarr4k_url = user_input.get(CONF_SONARR2_URL, "").strip()
+            sonarr4k_key = user_input.get(CONF_SONARR2_KEY, "").strip()
+
+            if radarr4k_url:
+                err = await _test_arr(session, radarr4k_url, radarr4k_key, "radarr2")
+                if err:
+                    errors[CONF_RADARR2_URL] = err
+
+            if not errors and sonarr4k_url:
+                err = await _test_arr(session, sonarr4k_url, sonarr4k_key, "sonarr2")
+                if err:
+                    errors[CONF_SONARR2_URL] = err
+
+            if not errors:
+                self._data[CONF_RADARR2_URL] = radarr4k_url
+                self._data[CONF_RADARR2_KEY] = radarr4k_key
+                self._data[CONF_SONARR2_URL] = sonarr4k_url
+                self._data[CONF_SONARR2_KEY] = sonarr4k_key
+                return await self.async_step_discovery()
+
+        schema = vol.Schema({
+            vol.Optional(CONF_RADARR2_URL): str,
+            vol.Optional(CONF_RADARR2_KEY): str,
+            vol.Optional(CONF_SONARR2_URL): str,
+            vol.Optional(CONF_SONARR2_KEY): str,
+        })
+        suggested = self._data if self._data else {
+            CONF_RADARR2_URL: "http://192.168.1.x:7879",
+            CONF_SONARR2_URL: "http://192.168.1.x:8990",
+        }
+        schema = self.add_suggested_values_to_schema(schema, suggested)
+        return self.async_show_form(
+            step_id="quality",
+            data_schema=schema,
+            errors=errors,
+            last_step=False,
+        )
+
+    # ── Krok 4: Overseerr (volitelný) + family účet + Bazarr (volitelné) ────
 
     async def async_step_discovery(self, user_input=None):
         errors = {}
 
         if user_input is not None:
             session = async_get_clientsession(self.hass)
+            seerr_url = user_input.get(CONF_SEERR_URL, "").strip()
+            seerr_key = user_input.get(CONF_SEERR_KEY, "").strip()
 
-            err = await _test_overseerr(session, user_input[CONF_SEERR_URL], user_input[CONF_SEERR_KEY])
-            if err:
-                errors[CONF_SEERR_URL] = err
-            else:
-                err = await _test_overseerr_family(
-                    session,
-                    user_input[CONF_SEERR_URL],
-                    user_input.get(CONF_SEERR_FAMILY_EMAIL, ""),
-                    user_input.get(CONF_SEERR_FAMILY_PASS, ""),
-                )
+            if seerr_url and seerr_key:
+                err = await _test_overseerr(session, seerr_url, seerr_key)
                 if err:
-                    errors[CONF_SEERR_FAMILY_EMAIL] = err
+                    errors[CONF_SEERR_URL] = err
                 else:
-                    err = await _test_bazarr(
+                    err = await _test_overseerr_family(
                         session,
-                        user_input.get(CONF_BAZARR_URL, ""),
-                        user_input.get(CONF_BAZARR_KEY, ""),
+                        seerr_url,
+                        user_input.get(CONF_SEERR_FAMILY_EMAIL, ""),
+                        user_input.get(CONF_SEERR_FAMILY_PASS, ""),
                     )
                     if err:
-                        errors[CONF_BAZARR_URL] = err
+                        errors[CONF_SEERR_FAMILY_EMAIL] = err
+
+            if not errors:
+                err = await _test_bazarr(
+                    session,
+                    user_input.get(CONF_BAZARR_URL, ""),
+                    user_input.get(CONF_BAZARR_KEY, ""),
+                )
+                if err:
+                    errors[CONF_BAZARR_URL] = err
 
             if not errors:
                 self._data.update(user_input)
-                for key in [CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS, CONF_BAZARR_URL, CONF_BAZARR_KEY]:
+                for key in [CONF_SEERR_URL, CONF_SEERR_KEY, CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS, CONF_BAZARR_URL, CONF_BAZARR_KEY]:
                     self._data[key] = user_input.get(key, "")
                 return await self.async_step_plex()
 
         schema = vol.Schema({
-            vol.Required(CONF_SEERR_URL):          str,
-            vol.Required(CONF_SEERR_KEY):          str,
+            vol.Optional(CONF_SEERR_URL):          str,
+            vol.Optional(CONF_SEERR_KEY):          str,
             vol.Optional(CONF_SEERR_FAMILY_EMAIL): str,
             vol.Optional(CONF_SEERR_FAMILY_PASS):  str,
             vol.Optional(CONF_BAZARR_URL):         str,

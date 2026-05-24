@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Arr Stack — Downloads (1/4)",
+        "title": "Arr Stack — Downloads (1/5)",
         "description": "All fields on this page are optional — leave any field empty to skip that service.",
         "data": {
           "qbittorrent_url": "qBittorrent URL (optional)",
@@ -20,7 +20,7 @@
         }
       },
       "media": {
-        "title": "Arr Stack — Media (2/4)",
+        "title": "Arr Stack — Media (2/5)",
         "description": "Radarr and Sonarr are required to use the card.",
         "data": {
           "radarr_url": "Radarr URL",
@@ -35,12 +35,28 @@
           "sonarr_api_key": "Find it in Sonarr → Settings → General → API Key"
         }
       },
-      "discovery": {
-        "title": "Arr Stack — Discovery & Subtitles (3/4)",
-        "description": "Overseerr / Jellyseerr is required. Fields marked optional can be left empty.",
+      "quality": {
+        "title": "Arr Stack — Radarr 2 / Sonarr 2 (3/5)",
+        "description": "Optional — configure second instances of Radarr and Sonarr. Leave empty if you only have one instance.",
         "data": {
-          "seerr_url": "Overseerr / Jellyseerr URL",
-          "seerr_api_key": "Overseerr / Jellyseerr API key",
+          "radarr2_url": "Radarr 2 URL (optional)",
+          "radarr2_api_key": "Radarr 2 API key (optional)",
+          "sonarr2_url": "Sonarr 2 URL (optional)",
+          "sonarr2_api_key": "Sonarr 2 API key (optional)"
+        },
+        "data_description": {
+          "radarr2_url": "e.g. http://192.168.1.10:7879 — URL of your second Radarr instance",
+          "radarr2_api_key": "Find it in your second Radarr → Settings → General → API Key",
+          "sonarr2_url": "e.g. http://192.168.1.10:8990 — URL of your second Sonarr instance",
+          "sonarr2_api_key": "Find it in your second Sonarr → Settings → General → API Key"
+        }
+      },
+      "discovery": {
+        "title": "Arr Stack — Discovery & Subtitles (4/5)",
+        "description": "Overseerr / Jellyseerr is optional. Without it, movies and shows are added directly to Radarr/Sonarr. All fields on this page can be left empty.",
+        "data": {
+          "seerr_url": "Overseerr / Jellyseerr URL (optional)",
+          "seerr_api_key": "Overseerr / Jellyseerr API key (optional)",
           "seerr_family_email": "Family account email (optional)",
           "seerr_family_password": "Family account password (optional)",
           "bazarr_url": "Bazarr URL (optional)",
@@ -56,7 +72,7 @@
         }
       },
       "plex": {
-        "title": "Arr Stack — Plex & Tautulli (4/4)",
+        "title": "Arr Stack — Plex & Tautulli (5/5)",
         "description": "**Plex** — Optional, enables playback control.\n\n{plex_section}\n\n---\n\n**Tautulli** — Optional, enables watch history and statistics.",
         "data": {
           "tautulli_url": "Tautulli URL (optional)",
@@ -83,9 +99,15 @@
       "radarr_bad_key": "Invalid Radarr API key — find it in Radarr → Settings → General → API Key",
       "radarr_error": "Radarr returned an unexpected error — check the URL and that Radarr is running",
       "radarr_wrong_port": "Radarr not found at this address — default port is 7878. Check the URL",
+      "radarr2_bad_key": "Invalid Radarr 2 API key — find it in your second Radarr → Settings → General → API Key",
+      "radarr2_error": "Radarr 2 returned an unexpected error — check the URL and that Radarr 2 is running",
+      "radarr2_wrong_port": "Radarr 2 not found at this address — check the URL",
       "sonarr_bad_key": "Invalid Sonarr API key — find it in Sonarr → Settings → General → API Key",
       "sonarr_error": "Sonarr returned an unexpected error — check the URL and that Sonarr is running",
       "sonarr_wrong_port": "Sonarr not found at this address — default port is 8989. Check the URL",
+      "sonarr2_bad_key": "Invalid Sonarr 2 API key — find it in your second Sonarr → Settings → General → API Key",
+      "sonarr2_error": "Sonarr 2 returned an unexpected error — check the URL and that Sonarr 2 is running",
+      "sonarr2_wrong_port": "Sonarr 2 not found at this address — check the URL",
       "overseerr_bad_key": "Invalid Overseerr/Jellyseerr API key — find it in Settings → General → API Key",
       "overseerr_error": "Overseerr/Jellyseerr returned an unexpected error — check the URL and that it is running",
       "overseerr_wrong_port": "Overseerr/Jellyseerr not found at this address — default port is 5055. Check the URL",

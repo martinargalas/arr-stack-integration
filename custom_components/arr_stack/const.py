@@ -10,8 +10,14 @@ CONF_SAB_KEY = "sabnzbd_api_key"
 CONF_RADARR_URL = "radarr_url"
 CONF_RADARR_KEY = "radarr_api_key"
 
+CONF_RADARR2_URL = "radarr2_url"
+CONF_RADARR2_KEY = "radarr2_api_key"
+
 CONF_SONARR_URL = "sonarr_url"
 CONF_SONARR_KEY = "sonarr_api_key"
+
+CONF_SONARR2_URL = "sonarr2_url"
+CONF_SONARR2_KEY = "sonarr2_api_key"
 
 CONF_SEERR_URL          = "seerr_url"
 CONF_SEERR_KEY          = "seerr_api_key"
