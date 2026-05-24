@@ -860,13 +860,30 @@ class ArrStackProxyView(HomeAssistantView):
             token = cfg.get(CONF_PLEX_TOKEN, "")
             base  = cfg.get(CONF_PLEX_URL, "").rstrip("/")
             if not token or not base:
-                return web.json_response({"error": "Plex not configured"}, status=503)
+                return web.json_response([], status=200)
 
             plex_hdrs = {
                 "X-Plex-Token":             token,
                 "X-Plex-Client-Identifier": PLEX_CLIENT_ID,
                 "Accept":                   "application/json",
             }
+
+            # GET plex/image → proxy Plex artwork (no JSON Accept header for images)
+            if path == "image" and method == "GET":
+                img_path = request.rel_url.query.get("path", "")
+                if not img_path:
+                    return web.Response(status=400)
+                img_hdrs = {
+                    "X-Plex-Token":             token,
+                    "X-Plex-Client-Identifier": PLEX_CLIENT_ID,
+                }
+                async with http.get(
+                    f"{base}{img_path}",
+                    headers=img_hdrs,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    ct = r.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
+                    return web.Response(body=await r.read(), content_type=ct, status=r.status)
 
             # GET plex/clients → /clients (registered players with ports)
             if path == "clients" and method == "GET":
@@ -960,6 +977,83 @@ class ArrStackProxyView(HomeAssistantView):
                     ) as r:
                         await r.read()
                         return web.json_response({"ok": r.status < 400, "status": r.status}, status=200)
+
+        # ════════════════════════════════════════════
+        # TMDB — discover proxy (fallback when Overseerr not configured)
+        # ════════════════════════════════════════════
+        elif service == "tmdb":
+            from .const import TMDB_API_KEY, TMDB_BASE as _TMDB_BASE
+
+            def _tmdb_item(item, force_type=None):
+                mt = force_type or item.get("media_type", "movie")
+                return {
+                    "id":          item.get("id"),
+                    "title":       item.get("title") or item.get("name", ""),
+                    "name":        item.get("name") or item.get("title", ""),
+                    "mediaType":   mt,
+                    "posterPath":  item.get("poster_path"),
+                    "backdropPath": item.get("backdrop_path"),
+                    "releaseDate": item.get("release_date") or item.get("first_air_date", ""),
+                    "firstAirDate": item.get("first_air_date", ""),
+                    "overview":    item.get("overview", ""),
+                    "voteAverage": item.get("vote_average", 0),
+                    "voteCount":   item.get("vote_count", 0),
+                    "genreIds":    item.get("genre_ids", []),
+                }
+
+            def _tmdb_page(data, force_type=None):
+                items = [
+                    _tmdb_item(r, force_type)
+                    for r in data.get("results", [])
+                    if (force_type or r.get("media_type", "movie")) in ("movie", "tv")
+                ]
+                return {
+                    "results":      items,
+                    "totalPages":   data.get("total_pages", 1),
+                    "totalResults": data.get("total_results", 0),
+                    "page":         data.get("page", 1),
+                }
+
+            base_params = {"api_key": TMDB_API_KEY, "language": "en-US"}
+            page = request.rel_url.query.get("page", "1")
+            timeout = aiohttp.ClientTimeout(total=10)
+
+            if path == "upcoming" and method == "GET":
+                async with http.get(f"{_TMDB_BASE}/movie/upcoming", params={**base_params, "page": page}, timeout=timeout) as r:
+                    return web.json_response(_tmdb_page(await r.json(), "movie"))
+
+            if path == "popular" and method == "GET":
+                async with http.get(f"{_TMDB_BASE}/movie/popular", params={**base_params, "page": page}, timeout=timeout) as r:
+                    return web.json_response(_tmdb_page(await r.json(), "movie"))
+
+            if path == "trending" and method == "GET":
+                async with http.get(f"{_TMDB_BASE}/trending/all/week", params={**base_params, "page": page}, timeout=timeout) as r:
+                    return web.json_response(_tmdb_page(await r.json()))
+
+            if path == "tv_upcoming" and method == "GET":
+                async with http.get(f"{_TMDB_BASE}/tv/on_the_air", params={**base_params, "page": page}, timeout=timeout) as r:
+                    return web.json_response(_tmdb_page(await r.json(), "tv"))
+
+            if path == "search" and method == "POST":
+                body = await request.json()
+                query = body.get("query", "")
+                async with http.get(
+                    f"{_TMDB_BASE}/search/multi",
+                    params={**base_params, "query": query, "include_adult": "false"},
+                    timeout=timeout,
+                ) as r:
+                    return web.json_response(_tmdb_page(await r.json()))
+
+            if path.startswith("tv/") and method == "GET":
+                tv_id = path[3:]
+                async with http.get(
+                    f"{_TMDB_BASE}/tv/{tv_id}/external_ids",
+                    params={"api_key": TMDB_API_KEY},
+                    timeout=timeout,
+                ) as r:
+                    ext = await r.json()
+                    tvdb_id = ext.get("tvdb_id")
+                    return web.json_response({"externalIds": {"tvdbId": tvdb_id}})
 
         # ════════════════════════════════════════════
         # Tautulli

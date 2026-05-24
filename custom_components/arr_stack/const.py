@@ -34,3 +34,6 @@ CONF_TAUTULLI_URL = "tautulli_url"
 CONF_TAUTULLI_KEY = "tautulli_api_key"
 
 PLEX_CLIENT_ID  = "arr-stack-card"
+
+TMDB_API_KEY = "a6c41993f7f9c078b78fbb449af8f9fd"
+TMDB_BASE    = "https://api.themoviedb.org/3"

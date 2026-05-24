@@ -95,7 +95,7 @@ Configure a second Radarr and/or Sonarr instance — useful for HD + 4K setups.
 
 **Step 4 — Discovery & Subtitles** *(all optional)*
 
-Overseerr/Jellyseerr enables trending/popular/upcoming sections and request management. Without it, movies and shows are added directly to Radarr/Sonarr.
+Trending, popular, and upcoming sections are always available. Overseerr/Jellyseerr adds request approval workflow and family account support.
 
 | Field | Example | Notes |
 |-------|---------|-------|
