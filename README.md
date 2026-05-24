@@ -26,7 +26,9 @@ Browsers block direct API calls from a web page to local network services (CORS 
 |---------|------|----------|
 | Radarr | Movie library management | ✅ Yes |
 | Sonarr | TV show library management | ✅ Yes |
-| Overseerr / Jellyseerr | Media discovery & requests | ✅ Yes |
+| Radarr 2 | Second Radarr instance (e.g. 4K) | Optional |
+| Sonarr 2 | Second Sonarr instance (e.g. 4K) | Optional |
+| Overseerr / Jellyseerr | Media discovery & requests | Optional |
 | qBittorrent | Torrent download client | Optional |
 | SABnzbd | Usenet download client | Optional |
 | Bazarr | Subtitle management | Optional |
@@ -59,7 +61,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 
 ## Setup Wizard
 
-The integration is configured via a 4-step wizard.
+The integration is configured via a 5-step wizard.
 
 **Step 1 — Downloads** *(all optional)*
 
@@ -80,18 +82,31 @@ The integration is configured via a 4-step wizard.
 | Sonarr URL | `http://192.168.1.10:8989` |
 | Sonarr API key | `••••` |
 
-**Step 3 — Discovery & Subtitles** *(Overseerr/Jellyseerr required, rest optional)*
+**Step 3 — Second instances** *(all optional)*
+
+Configure a second Radarr and/or Sonarr instance — useful for HD + 4K setups.
+
+| Field | Example |
+|-------|---------|
+| Radarr 2 URL | `http://192.168.1.10:7879` |
+| Radarr 2 API key | `••••` |
+| Sonarr 2 URL | `http://192.168.1.10:8990` |
+| Sonarr 2 API key | `••••` |
+
+**Step 4 — Discovery & Subtitles** *(all optional)*
+
+Overseerr/Jellyseerr enables trending/popular/upcoming sections and request management. Without it, movies and shows are added directly to Radarr/Sonarr.
 
 | Field | Example | Notes |
 |-------|---------|-------|
-| Overseerr / Jellyseerr URL | `http://192.168.1.10:5055` | Required |
-| Overseerr / Jellyseerr API key | `••••` | Required |
+| Overseerr / Jellyseerr URL | `http://192.168.1.10:5055` | Optional |
+| Overseerr / Jellyseerr API key | `••••` | Optional |
 | Family account email | `user@example.com` | Optional — non-admin account for household users |
 | Family account password | `••••` | Optional |
 | Bazarr URL | `http://192.168.1.10:6767` | Optional |
 | Bazarr API key | `••••` | Optional |
 
-**Step 4 — Plex & Tautulli** *(both optional)*
+**Step 5 — Plex & Tautulli** *(both optional)*
 
 | Field | Notes |
 |-------|-------|
