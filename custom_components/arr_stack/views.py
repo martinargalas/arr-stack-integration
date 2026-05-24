@@ -899,17 +899,19 @@ class ArrStackProxyView(HomeAssistantView):
                     )
 
             # GET plex/sessions → /status/sessions
+            # Injects _thumbUrl (full URL with token) into each session so the card
+            # can use artwork directly without an HA-authenticated image proxy.
             if path == "sessions" and method == "GET":
                 async with http.get(
                     f"{base}/status/sessions",
                     headers=plex_hdrs,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as r:
-                    return web.Response(
-                        body=await r.read(),
-                        content_type="application/json",
-                        status=r.status,
-                    )
+                    data = await r.json()
+                    for item in data.get("MediaContainer", {}).get("Metadata", []):
+                        thumb = item.get("thumb") or item.get("parentThumb") or item.get("grandparentThumb") or ""
+                        item["_thumbUrl"] = f"{base}{thumb}?X-Plex-Token={token}" if thumb else ""
+                    return web.json_response(data, status=r.status)
 
             # POST plex/player → player control (play/pause/seek/stop)
             # Body: { action, machineIdentifier, offset? (ms), playerUrl? }
