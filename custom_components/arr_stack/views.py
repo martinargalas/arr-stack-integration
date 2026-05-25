@@ -324,8 +324,10 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v3/movie/{movie_id}",
                     headers=hdrs,
                     params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
+                    timeout=aiohttp.ClientTimeout(total=60),
                 ) as r:
-                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+                    body = await r.read()
+                    return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
 
             # Grab — stáhne konkrétní release do download klienta
             if path == "release" and method == "POST":
@@ -342,6 +344,16 @@ class ArrStackProxyView(HomeAssistantView):
                         content_type="application/json",
                         status=r.status,
                     )
+
+            if path == "history" and method == "GET":
+                movie_id = request.query.get("movieId", "")
+                async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "command" and method == "POST":
+                body = await request.json()
+                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
         # ════════════════════════════════════════════
         # Sonarr
@@ -366,6 +378,10 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "rootfolders":
                 async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "queue":
+                async with http.get(f"{base}/api/v3/queue?pageSize=200&includeUnknownSeriesItems=false", headers=hdrs) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "series" and method == "GET":
@@ -439,6 +455,17 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(f"{base}/api/v3/history", headers=hdrs, params={"pageSize": "100", "sortKey": "date", "sortDir": "desc"}) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path.startswith("series/") and method == "PUT":
+                series_id = path.split("/", 1)[1]
+                body = await request.json()
+                async with http.put(f"{base}/api/v3/series/{series_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "command" and method == "POST":
+                body = await request.json()
+                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             # Smaže seriál z knihovny
             if path.startswith("series/") and method == "DELETE":
                 series_id = path.split("/", 1)[1]
@@ -448,15 +475,17 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v3/series/{series_id}",
                     headers=hdrs,
                     params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
+                    timeout=aiohttp.ClientTimeout(total=60),
                 ) as r:
-                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+                    body = await r.read()
+                    return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
 
         # ════════════════════════════════════════════
         # Radarr 2
         # ════════════════════════════════════════════
         elif service == "radarr2":
             if not cfg.get(CONF_RADARR2_URL):
-                return web.json_response([], status=200)
+                return web.json_response({"_notConfigured": True})
             base = cfg.get(CONF_RADARR2_URL, "")
             hdrs = {"X-Api-Key": cfg.get(CONF_RADARR2_KEY, "")}
 
@@ -505,8 +534,10 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v3/movie/{movie_id}",
                     headers=hdrs,
                     params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
+                    timeout=aiohttp.ClientTimeout(total=60),
                 ) as r:
-                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+                    body = await r.read()
+                    return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "release" and method == "POST":
                 body = await request.json()
@@ -518,12 +549,17 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path == "command" and method == "POST":
+                body = await request.json()
+                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
         # ════════════════════════════════════════════
         # Sonarr 4K
         # ════════════════════════════════════════════
         elif service == "sonarr2":
             if not cfg.get(CONF_SONARR2_URL):
-                return web.json_response([], status=200)
+                return web.json_response({"_notConfigured": True})
             base = cfg.get(CONF_SONARR2_URL, "")
             hdrs = {"X-Api-Key": cfg.get(CONF_SONARR2_KEY, "")}
 
@@ -537,6 +573,10 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "rootfolders":
                 async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "queue":
+                async with http.get(f"{base}/api/v3/queue?pageSize=200&includeUnknownSeriesItems=false", headers=hdrs) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "series" and method == "GET":
@@ -561,6 +601,17 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "history" and method == "GET":
                 series_id = request.query.get("seriesId", "")
                 async with http.get(f"{base}/api/v3/history/series", headers=hdrs, params={"seriesId": series_id, "pageSize": "200"}) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path.startswith("series/") and method == "PUT":
+                series_id = path.split("/", 1)[1]
+                body = await request.json()
+                async with http.put(f"{base}/api/v3/series/{series_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "command" and method == "POST":
+                body = await request.json()
+                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
         # ════════════════════════════════════════════
@@ -1055,16 +1106,45 @@ class ArrStackProxyView(HomeAssistantView):
                 ) as r:
                     return web.json_response(_tmdb_page(await r.json()))
 
+            if path.startswith("movie/") and method == "GET":
+                movie_id = path[6:]
+                async with http.get(f"{_TMDB_BASE}/movie/{movie_id}", params=base_params, timeout=timeout) as r:
+                    d = await r.json()
+                async with http.get(f"{_TMDB_BASE}/movie/{movie_id}/videos", params=base_params, timeout=timeout) as r:
+                    v = await r.json()
+                trailer = next((x for x in v.get("results", []) if x.get("site") == "YouTube" and x.get("type") == "Trailer"), None) \
+                       or next((x for x in v.get("results", []) if x.get("site") == "YouTube"), None)
+                return web.json_response({
+                    "id":              d.get("id"),
+                    "title":           d.get("title", ""),
+                    "overview":        d.get("overview", ""),
+                    "posterPath":      d.get("poster_path"),
+                    "backdropPath":    d.get("backdrop_path"),
+                    "releaseDate":     d.get("release_date", ""),
+                    "voteAverage":     d.get("vote_average", 0),
+                    "genres":          [{"name": g["name"]} for g in d.get("genres", [])],
+                    "youTubeTrailerId": trailer["key"] if trailer else None,
+                })
+
             if path.startswith("tv/") and method == "GET":
                 tv_id = path[3:]
-                async with http.get(
-                    f"{_TMDB_BASE}/tv/{tv_id}/external_ids",
-                    params={"api_key": TMDB_API_KEY},
-                    timeout=timeout,
-                ) as r:
-                    ext = await r.json()
-                    tvdb_id = ext.get("tvdb_id")
-                    return web.json_response({"externalIds": {"tvdbId": tvdb_id}})
+                async with http.get(f"{_TMDB_BASE}/tv/{tv_id}", params=base_params, timeout=timeout) as r:
+                    d = await r.json()
+                async with http.get(f"{_TMDB_BASE}/tv/{tv_id}/videos", params=base_params, timeout=timeout) as r:
+                    v = await r.json()
+                trailer = next((x for x in v.get("results", []) if x.get("site") == "YouTube" and x.get("type") == "Trailer"), None) \
+                       or next((x for x in v.get("results", []) if x.get("site") == "YouTube"), None)
+                return web.json_response({
+                    "id":              d.get("id"),
+                    "name":            d.get("name", ""),
+                    "overview":        d.get("overview", ""),
+                    "posterPath":      d.get("poster_path"),
+                    "backdropPath":    d.get("backdrop_path"),
+                    "firstAirDate":    d.get("first_air_date", ""),
+                    "voteAverage":     d.get("vote_average", 0),
+                    "genres":          [{"name": g["name"]} for g in d.get("genres", [])],
+                    "youTubeTrailerId": trailer["key"] if trailer else None,
+                })
 
         # ════════════════════════════════════════════
         # Tautulli

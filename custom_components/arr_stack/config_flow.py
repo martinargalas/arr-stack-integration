@@ -346,10 +346,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_SONARR2_URL): str,
             vol.Optional(CONF_SONARR2_KEY): str,
         })
-        suggested = self._data if self._data else {
-            CONF_RADARR2_URL: "http://192.168.1.x:7879",
-            CONF_SONARR2_URL: "http://192.168.1.x:8990",
-        }
+        suggested = self._data if self._data else {}
         schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(
             step_id="quality",
