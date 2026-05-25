@@ -292,6 +292,15 @@ class ArrStackProxyView(HomeAssistantView):
                         status=r.status,
                     )
 
+            if path == "lookup" and method == "GET":
+                term = request.query.get("term", "")
+                async with http.get(
+                    f"{base}/api/v3/movie/lookup",
+                    headers=hdrs,
+                    params={"term": term},
+                ) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             # Přidá film do Radarru (unmonitored, pro IS u filmů mimo knihovnu)
             if path == "movie" and method == "POST":
                 body = await request.json()
