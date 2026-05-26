@@ -982,7 +982,7 @@ class ArrStackProxyView(HomeAssistantView):
                 offset     = body.get("offset")        # ms, only for seekTo
                 player_url = (body.get("playerUrl") or "").rstrip("/")
 
-                plex_actions = {"play", "pause", "stop", "seekTo"}
+                plex_actions = {"play", "pause", "stop", "seekTo", "skipPrevious", "skipNext"}
                 if action not in plex_actions:
                     return web.json_response({"error": "unknown action"}, status=400)
 
@@ -1039,6 +1039,23 @@ class ArrStackProxyView(HomeAssistantView):
                     ) as r:
                         await r.read()
                         return web.json_response({"ok": r.status < 400, "status": r.status}, status=200)
+
+            # DELETE plex/session/terminate → terminate session with reason message
+            # Body: { sessionId, reason }
+            if path == "session/terminate" and method == "DELETE":
+                body       = await request.json()
+                session_id = body.get("sessionId", "")
+                reason     = body.get("reason", "Your session has been terminated by an administrator.")
+                if not session_id:
+                    return web.json_response({"error": "sessionId required"}, status=400)
+                async with http.delete(
+                    f"{base}/status/sessions/terminate",
+                    headers=plex_hdrs,
+                    params={"sessionId": session_id, "reason": reason},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    await r.read()
+                    return web.json_response({"ok": r.status < 400, "status": r.status}, status=200)
 
         # ════════════════════════════════════════════
         # TMDB — discover proxy (fallback when Overseerr not configured)
