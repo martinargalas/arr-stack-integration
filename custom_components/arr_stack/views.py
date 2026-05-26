@@ -24,6 +24,7 @@ from .const import (
     CONF_BAZARR_URL, CONF_BAZARR_KEY,
     CONF_PLEX_TOKEN, CONF_PLEX_URL, PLEX_CLIENT_ID,
     CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
+    CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY,
 )
 
 # qBit v5 → v4 fallback endpoint mapa
@@ -1200,6 +1201,45 @@ class ArrStackProxyView(HomeAssistantView):
                     content_type="application/json",
                     status=r.status,
                 )
+
+        # ════════════════════════════════════════════
+        # Jellystat
+        # ════════════════════════════════════════════
+        elif service == "jellystat":
+            jellystat_url = cfg.get(CONF_JELLYSTAT_URL, "").rstrip("/")
+            jellystat_key = cfg.get(CONF_JELLYSTAT_KEY, "")
+            if not jellystat_url or not jellystat_key:
+                return web.json_response({"error": "Jellystat not configured"}, status=503)
+
+            params = dict(request.rel_url.query)
+            headers = {
+                "x-api-token": jellystat_key,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            }
+
+            # stats/ routes live at /stats/... not /api/stats/...
+            if path.startswith("stats/"):
+                target_url = f"{jellystat_url}/{path}"
+            else:
+                target_url = f"{jellystat_url}/api/{path}"
+            if method == "GET":
+                async with http.get(
+                    target_url,
+                    headers=headers,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+            elif method == "POST":
+                body = await request.read()
+                async with http.post(
+                    target_url,
+                    headers=headers,
+                    data=body,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
         # ════════════════════════════════════════════
         # System

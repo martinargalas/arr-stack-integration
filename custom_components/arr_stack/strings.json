@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Arr Stack — Downloads (1/5)",
+        "title": "Arr Stack — Downloads (1/6)",
         "description": "All fields on this page are optional — leave any field empty to skip that service.",
         "data": {
           "qbittorrent_url": "qBittorrent URL (optional)",
@@ -20,7 +20,7 @@
         }
       },
       "media": {
-        "title": "Arr Stack — Media (2/5)",
+        "title": "Arr Stack — Media (2/6)",
         "description": "Radarr and Sonarr are required to use the card.",
         "data": {
           "radarr_url": "Radarr URL",
@@ -36,7 +36,7 @@
         }
       },
       "quality": {
-        "title": "Arr Stack — Radarr 2 / Sonarr 2 (3/5)",
+        "title": "Arr Stack — Radarr 2 / Sonarr 2 (3/6)",
         "description": "Optional — configure second instances of Radarr and Sonarr. Leave empty if you only have one instance.",
         "data": {
           "radarr2_url": "Radarr 2 URL (optional)",
@@ -52,7 +52,7 @@
         }
       },
       "discovery": {
-        "title": "Arr Stack — Discovery & Subtitles (4/5)",
+        "title": "Arr Stack — Discovery & Subtitles (4/6)",
         "description": "Overseerr / Jellyseerr is optional. Without it, movies and shows are added directly to Radarr/Sonarr. All fields on this page can be left empty.",
         "data": {
           "seerr_url": "Overseerr / Jellyseerr URL (optional)",
@@ -72,7 +72,7 @@
         }
       },
       "plex": {
-        "title": "Arr Stack — Plex & Tautulli (5/5)",
+        "title": "Arr Stack — Plex & Tautulli (5/6)",
         "description": "**Plex** — Optional, enables playback control.\n\n{plex_section}\n\n---\n\n**Tautulli** — Optional, enables watch history and statistics.",
         "data": {
           "tautulli_url": "Tautulli URL (optional)",
@@ -82,6 +82,18 @@
         "data_description": {
           "tautulli_url": "e.g. http://192.168.1.10:8181 — default port is 8181",
           "tautulli_api_key": "Find it in Tautulli → Settings → Web Interface → API Key"
+        }
+      },
+      "jellyfin": {
+        "title": "Arr Stack — Jellystat (6/6)",
+        "description": "**Jellystat** — Optional, enables Jellyfin watch history and statistics. Leave empty to skip.",
+        "data": {
+          "jellystat_url": "Jellystat URL (optional)",
+          "jellystat_api_key": "Jellystat API key (optional)"
+        },
+        "data_description": {
+          "jellystat_url": "e.g. http://192.168.1.10:4000 — default port is 4000",
+          "jellystat_api_key": "Find it in Jellystat → Settings → API Key"
         }
       }
     },
@@ -123,7 +135,10 @@
       "plex_not_authenticated": "Plex authorisation not completed — open the link, sign in, and submit again",
       "tautulli_bad_key": "Invalid Tautulli API key — find it in Tautulli → Settings → Web Interface → API Key",
       "tautulli_error": "Tautulli returned an unexpected error — check the URL and that Tautulli is running",
-      "tautulli_wrong_port": "Tautulli not found at this address — default port is 8181. Check the URL"
+      "tautulli_wrong_port": "Tautulli not found at this address — default port is 8181. Check the URL",
+      "jellystat_bad_key": "Invalid Jellystat API key — find it in Jellystat → Settings → API Key",
+      "jellystat_error": "Jellystat returned an unexpected error — check the URL and that Jellystat is running",
+      "jellystat_wrong_port": "Jellystat not found at this address — default port is 4000. Check the URL"
     }
   }
 }

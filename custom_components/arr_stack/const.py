@@ -33,6 +33,9 @@ CONF_PLEX_URL   = "plex_url"
 CONF_TAUTULLI_URL = "tautulli_url"
 CONF_TAUTULLI_KEY = "tautulli_api_key"
 
+CONF_JELLYSTAT_URL = "jellystat_url"
+CONF_JELLYSTAT_KEY = "jellystat_api_key"
+
 PLEX_CLIENT_ID  = "arr-stack-card"
 
 TMDB_API_KEY = "a6c41993f7f9c078b78fbb449af8f9fd"

@@ -19,6 +19,7 @@ from .const import (
     CONF_BAZARR_URL, CONF_BAZARR_KEY,
     CONF_PLEX_TOKEN, CONF_PLEX_URL, PLEX_CLIENT_ID,
     CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
+    CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY,
 )
 
 
@@ -178,6 +179,25 @@ async def _test_tautulli(session: aiohttp.ClientSession, url: str, key: str) -> 
             if r.status == 404:
                 return "tautulli_wrong_port"
             return "tautulli_error"
+    except Exception as e:
+        return _map_exc(e)
+
+
+async def _test_jellystat(session: aiohttp.ClientSession, url: str, key: str) -> str | None:
+    if not url:
+        return None
+    if err := _url_error(url):
+        return err
+    try:
+        # Just verify server is reachable — Jellystat API endpoint paths vary by version
+        async with session.get(
+            url.rstrip('/'),
+            headers={"x-api-token": key, "Accept": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=8),
+        ) as r:
+            if r.status < 500:
+                return None
+            return "jellystat_error"
     except Exception as e:
         return _map_exc(e)
 
@@ -434,7 +454,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._data[CONF_PLEX_URL]     = ""
                     self._data[CONF_TAUTULLI_URL] = tautulli_url
                     self._data[CONF_TAUTULLI_KEY] = tautulli_key
-                    return self._finish_flow()
+                    return await self.async_step_jellyfin()
 
                 if self._plex_pin_id:
                     token, server_url = await self._poll_plex_pin()
@@ -450,7 +470,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if not errors:
                         self._data[CONF_TAUTULLI_URL] = tautulli_url
                         self._data[CONF_TAUTULLI_KEY] = tautulli_key
-                        return self._finish_flow()
+                        return await self.async_step_jellyfin()
 
         existing_token = self._data.get(CONF_PLEX_TOKEN, "")
         has_plex = bool(existing_token)
@@ -505,6 +525,42 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=schema,
             errors=errors,
             description_placeholders={"plex_section": plex_section},
+            last_step=False,
+        )
+
+    # ── Krok 6: Jellystat (volitelné) ────────────────────────────────────────
+
+    async def async_step_jellyfin(self, user_input=None):
+        errors = {}
+
+        if user_input is not None:
+            session = async_get_clientsession(self.hass)
+            jellystat_url = user_input.get(CONF_JELLYSTAT_URL, "")
+            jellystat_key = user_input.get(CONF_JELLYSTAT_KEY, "")
+
+            err = await _test_jellystat(session, jellystat_url, jellystat_key)
+            if err:
+                errors[CONF_JELLYSTAT_URL] = err
+
+            if not errors:
+                self._data[CONF_JELLYSTAT_URL] = jellystat_url
+                self._data[CONF_JELLYSTAT_KEY] = jellystat_key
+                return self._finish_flow()
+
+        schema = vol.Schema({
+            vol.Optional(CONF_JELLYSTAT_URL): str,
+            vol.Optional(CONF_JELLYSTAT_KEY): str,
+        })
+        suggested = {
+            CONF_JELLYSTAT_URL: self._data.get(CONF_JELLYSTAT_URL, ""),
+            CONF_JELLYSTAT_KEY: self._data.get(CONF_JELLYSTAT_KEY, ""),
+        }
+        schema = self.add_suggested_values_to_schema(schema, suggested)
+        return self.async_show_form(
+            step_id="jellyfin",
+            data_schema=schema,
+            errors=errors,
+            last_step=True,
         )
 
     def _finish_flow(self):

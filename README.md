@@ -34,6 +34,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Bazarr | Subtitle management | Optional |
 | Plex | Stream monitoring & playback control | Optional |
 | Tautulli | Watch history, statistics & account sharing detection | Optional |
+| Jellystat | Watch history and statistics | Optional |
 
 ---
 
@@ -61,7 +62,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 
 ## Setup Wizard
 
-The integration is configured via a 5-step wizard.
+The integration is configured via a 6-step wizard.
 
 **Step 1 — Downloads** *(all optional)*
 
@@ -114,9 +115,16 @@ Trending, popular, and upcoming sections are always available. Overseerr/Jellyse
 | Tautulli URL | `http://192.168.1.10:8181` |
 | Tautulli API key | Found in Tautulli → Settings → Web Interface → API Key |
 
-> **Note — Plex Now Playing** requires the [Plex integration](https://www.home-assistant.io/integrations/plex/) installed in HA. It creates `media_player.plex_*` entities that the card reads for active sessions. Authenticating Plex here (Step 5) additionally enables playback control (pause / resume / stop).
+> **Note — Plex Now Playing** requires the [Plex integration](https://www.home-assistant.io/integrations/plex/) installed in HA. It creates `media_player.plex_*` entities that the card reads for active sessions. Authenticating Plex here (Step 5) additionally enables playback control (pause / resume / stop) and shows the active user on each stream card.
 
 > **Note — Tautulli account sharing detection** scans recent watch history to identify users streaming from multiple IP addresses and alerts you via the Statistics section. Configure threshold and history depth via `security.*` keys in the card YAML.
+
+**Step 6 — Jellystat** *(optional)*
+
+| Field | Notes |
+|-------|-------|
+| Jellystat URL | `http://192.168.1.10:3000` |
+| Jellystat API key | Found in Jellystat → Settings → API Key |
 
 ---
 
