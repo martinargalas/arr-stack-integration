@@ -604,6 +604,10 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(f"{base}/api/v3/history/series", headers=hdrs, params={"seriesId": series_id, "pageSize": "200"}) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path == "recentimports" and method == "GET":
+                async with http.get(f"{base}/api/v3/history", headers=hdrs, params={"pageSize": "100", "sortKey": "date", "sortDir": "desc"}) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path.startswith("series/") and method == "PUT":
                 series_id = path.split("/", 1)[1]
                 body = await request.json()
