@@ -38,5 +38,7 @@ CONF_JELLYSTAT_KEY = "jellystat_api_key"
 
 PLEX_CLIENT_ID  = "arr-stack-card"
 
+CONF_SKIP_SSL_VERIFY = "skip_ssl_verify"
+
 TMDB_API_KEY = "a6c41993f7f9c078b78fbb449af8f9fd"
 TMDB_BASE    = "https://api.themoviedb.org/3"

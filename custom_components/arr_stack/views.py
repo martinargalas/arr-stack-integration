@@ -25,7 +25,50 @@ from .const import (
     CONF_PLEX_TOKEN, CONF_PLEX_URL, PLEX_CLIENT_ID,
     CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
     CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY,
+    CONF_SKIP_SSL_VERIFY,
 )
+
+async def _plex_detect_server(session: aiohttp.ClientSession, token: str) -> str:
+    """Auto-detect reachable Plex server URL for given token."""
+    headers = {
+        "X-Plex-Token":             token,
+        "X-Plex-Client-Identifier": PLEX_CLIENT_ID,
+        "Accept":                   "application/json",
+    }
+    try:
+        async with session.get(
+            "https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=0&includeIPv6=0",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as r:
+            resources = await r.json()
+            for res in resources:
+                if res.get("product") == "Plex Media Server":
+                    conns = res.get("connections", [])
+                    local  = [c for c in conns if c.get("local") and not c.get("relay")]
+                    remote = [c for c in conns if not c.get("local") and not c.get("relay")]
+                    for c in local + remote:
+                        uri = c.get("uri", "").rstrip("/")
+                        if not uri:
+                            continue
+                        try:
+                            async with session.get(
+                                f"{uri}/",
+                                headers=headers,
+                                timeout=aiohttp.ClientTimeout(total=4),
+                                allow_redirects=False,
+                            ) as probe:
+                                if probe.status < 500:
+                                    return uri
+                        except Exception:
+                            continue
+                    candidates = local + remote
+                    if candidates:
+                        return candidates[0].get("uri", "").rstrip("/")
+    except Exception:
+        pass
+    return ""
+
 
 # qBit v5 → v4 fallback endpoint mapa
 QBIT_ENDPOINTS = {
@@ -50,6 +93,8 @@ class ArrStackProxyView(HomeAssistantView):
         self._qbit_session: aiohttp.ClientSession | None = None
         # Session pro rodinný Overseerr účet
         self._seerr_family_session: aiohttp.ClientSession | None = None
+        # Cache pro auto-detekovanou Plex URL (když user nezadal manuální)
+        self._plex_url_cache: str | None = None
 
     @property
     def _cfg(self) -> dict:
@@ -66,31 +111,31 @@ class ArrStackProxyView(HomeAssistantView):
             )
         return self._qbit_session
 
-    async def _qbit_login(self, session: aiohttp.ClientSession) -> None:
+    async def _qbit_login(self, session: aiohttp.ClientSession, ssl=None) -> None:
         """Přihlásí se do qBit (nastaví session cookie)."""
         url = f"{self._cfg.get(CONF_QBIT_URL, '')}/api/v2/auth/login"
         async with session.post(url, data={
             "username": self._cfg.get(CONF_QBIT_USER, ""),
             "password": self._cfg.get(CONF_QBIT_PASS, ""),
-        }) as r:
+        }, ssl=ssl) as r:
             await r.read()
 
-    async def _seerr_family_sess(self) -> aiohttp.ClientSession:
+    async def _seerr_family_sess(self, ssl=None) -> aiohttp.ClientSession:
         """Vrátí (nebo vytvoří) aiohttp session s cookie jar pro rodinný Overseerr účet."""
         if self._seerr_family_session is None or self._seerr_family_session.closed:
             self._seerr_family_session = aiohttp.ClientSession(
                 cookie_jar=aiohttp.CookieJar(unsafe=True)
             )
-            await self._seerr_family_login(self._seerr_family_session)
+            await self._seerr_family_login(self._seerr_family_session, ssl=ssl)
         return self._seerr_family_session
 
-    async def _seerr_family_login(self, session: aiohttp.ClientSession) -> None:
+    async def _seerr_family_login(self, session: aiohttp.ClientSession, ssl=None) -> None:
         """Přihlásí se do Overseerr jako rodinný účet (nastaví session cookie)."""
         url = f"{self._cfg[CONF_SEERR_URL]}/api/v1/auth/local"
         async with session.post(url, json={
             "email": self._cfg[CONF_SEERR_FAMILY_EMAIL],
             "password": self._cfg[CONF_SEERR_FAMILY_PASS],
-        }, headers={"Accept": "application/json"}) as r:
+        }, headers={"Accept": "application/json"}, ssl=ssl) as r:
             await r.read()
 
     # ── Router ───────────────────────────────────────────────────────────
@@ -124,6 +169,7 @@ class ArrStackProxyView(HomeAssistantView):
             _LOGGER.warning("arr_stack → %s/%s [%s]", service, path, method)
         cfg = self._cfg
         http = async_get_clientsession(self._hass)
+        ssl = False if cfg.get(CONF_SKIP_SSL_VERIFY) else None
 
         # ════════════════════════════════════════════
         # qBittorrent
@@ -132,19 +178,20 @@ class ArrStackProxyView(HomeAssistantView):
             if not cfg.get(CONF_QBIT_URL):
                 return web.json_response({"error": "qBittorrent not configured"}, status=503)
             qs = await self._qbit_sess()
-            await self._qbit_login(qs)
+            await self._qbit_login(qs, ssl=ssl)
 
             if path == "torrents":
                 url = f"{cfg[CONF_QBIT_URL]}/api/v2/torrents/info?filter=all"
                 if debug: _LOGGER.warning("arr_stack qbit → GET %s", url)
-                async with qs.get(url) as r:
+                async with qs.get(url, ssl=ssl) as r:
                     body = await r.read()
                     if debug: _LOGGER.warning("arr_stack qbit ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "transfer":
                 async with qs.get(
-                    f"{cfg[CONF_QBIT_URL]}/api/v2/transfer/info"
+                    f"{cfg[CONF_QBIT_URL]}/api/v2/transfer/info",
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -154,7 +201,8 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "maindata":
                 async with qs.get(
-                    f"{cfg[CONF_QBIT_URL]}/api/v2/sync/maindata"
+                    f"{cfg[CONF_QBIT_URL]}/api/v2/sync/maindata",
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -179,11 +227,13 @@ class ArrStackProxyView(HomeAssistantView):
                 )
 
                 async with qs.post(
-                    f"{cfg[CONF_QBIT_URL]}{v5ep}", data=data
+                    f"{cfg[CONF_QBIT_URL]}{v5ep}", data=data,
+                    ssl=ssl,
                 ) as r:
                     if r.status == 404 and v4ep != v5ep:
                         async with qs.post(
-                            f"{cfg[CONF_QBIT_URL]}{v4ep}", data=data
+                            f"{cfg[CONF_QBIT_URL]}{v4ep}", data=data,
+                            ssl=ssl,
                         ) as r2:
                             return web.json_response({"ok": r2.status == 200})
                     return web.json_response({"ok": r.status == 200})
@@ -199,14 +249,15 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "queue":
                 if debug: _LOGGER.warning("arr_stack sabnzbd → GET %s/api?mode=queue (apikey=REDACTED)", base)
-                async with http.get(f"{base}/api?mode=queue&output=json&apikey={key}") as r:
+                async with http.get(f"{base}/api?mode=queue&output=json&apikey={key}", ssl=ssl) as r:
                     body = await r.read()
                     if debug: _LOGGER.warning("arr_stack sabnzbd ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "history":
                 async with http.get(
-                    f"{base}/api?mode=history&output=json&limit=50&apikey={key}"
+                    f"{base}/api?mode=history&output=json&limit=50&apikey={key}",
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -215,7 +266,7 @@ class ArrStackProxyView(HomeAssistantView):
                     )
 
             if path == "status":
-                async with http.get(f"{base}/api?mode=status&output=json&apikey={key}") as r:
+                async with http.get(f"{base}/api?mode=status&output=json&apikey={key}", ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "action" and method == "POST":
@@ -228,7 +279,7 @@ class ArrStackProxyView(HomeAssistantView):
                     url += f"&name={name}"
                 if nzo_id:
                     url += f"&value={nzo_id}"
-                async with http.get(url) as r:
+                async with http.get(url, ssl=ssl) as r:
                     return web.json_response({"ok": r.status == 200})
 
         # ════════════════════════════════════════════
@@ -241,14 +292,15 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "movies":
                 url = f"{base}/api/v3/movie"
                 if debug: _LOGGER.warning("arr_stack radarr → GET %s", url)
-                async with http.get(url, headers=hdrs) as r:
+                async with http.get(url, headers=hdrs, ssl=ssl) as r:
                     body = await r.read()
                     if debug: _LOGGER.warning("arr_stack radarr ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "profiles":
                 async with http.get(
-                    f"{base}/api/v3/qualityprofile", headers=hdrs
+                    f"{base}/api/v3/qualityprofile", headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -257,17 +309,18 @@ class ArrStackProxyView(HomeAssistantView):
                     )
 
             if path == "tags":
-                async with http.get(f"{base}/api/v3/tag", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/tag", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "rootfolders":
-                async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "queue":
                 async with http.get(
                     f"{base}/api/v3/queue?includeMovie=false&pageSize=100",
                     headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -286,6 +339,7 @@ class ArrStackProxyView(HomeAssistantView):
                     headers=hdrs,
                     params={"movieId": movie_id},
                     timeout=timeout,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -299,6 +353,7 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v3/movie/lookup",
                     headers=hdrs,
                     params={"term": term},
+                    ssl=ssl,
                 ) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
@@ -309,6 +364,7 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v3/movie",
                     headers={**hdrs, "Content-Type": "application/json"},
                     json=body,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -326,6 +382,7 @@ class ArrStackProxyView(HomeAssistantView):
                     headers=hdrs,
                     params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
                     timeout=aiohttp.ClientTimeout(total=60),
+                    ssl=ssl,
                 ) as r:
                     body = await r.read()
                     return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
@@ -337,6 +394,7 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v3/release",
                     headers={**hdrs, "Content-Type": "application/json"},
                     json=body,
+                    ssl=ssl,
                 ) as r:
                     body_bytes = await r.read()
                     # Vracíme skutečné tělo odpovědi pro debugging
@@ -348,12 +406,12 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "history" and method == "GET":
                 movie_id = request.query.get("movieId", "")
-                async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}) as r:
+                async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "command" and method == "POST":
                 body = await request.json()
-                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
         # ════════════════════════════════════════════
@@ -365,7 +423,8 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "profiles":
                 async with http.get(
-                    f"{base}/api/v3/qualityprofile", headers=hdrs
+                    f"{base}/api/v3/qualityprofile", headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -374,21 +433,21 @@ class ArrStackProxyView(HomeAssistantView):
                     )
 
             if path == "tags":
-                async with http.get(f"{base}/api/v3/tag", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/tag", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "rootfolders":
-                async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "queue":
-                async with http.get(f"{base}/api/v3/queue?pageSize=200&includeUnknownSeriesItems=false", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/queue?pageSize=200&includeUnknownSeriesItems=false", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "series" and method == "GET":
                 url = f"{base}/api/v3/series"
                 if debug: _LOGGER.warning("arr_stack sonarr → GET %s", url)
-                async with http.get(url, headers=hdrs) as r:
+                async with http.get(url, headers=hdrs, ssl=ssl) as r:
                     body = await r.read()
                     if debug: _LOGGER.warning("arr_stack sonarr ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
@@ -399,6 +458,7 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v3/series",
                     headers={**hdrs, "Content-Type": "application/json"},
                     json=body,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
@@ -409,6 +469,7 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v3/series/lookup",
                     headers=hdrs,
                     params={"term": term},
+                    ssl=ssl,
                 ) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
@@ -416,7 +477,8 @@ class ArrStackProxyView(HomeAssistantView):
                 # Přepošli query parametry (start, end) z karty
                 params = {**dict(request.query), "includeSeries": "true", "unmonitored": "false"}
                 async with http.get(
-                    f"{base}/api/v3/calendar", headers=hdrs, params=params
+                    f"{base}/api/v3/calendar", headers=hdrs, params=params,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -428,43 +490,43 @@ class ArrStackProxyView(HomeAssistantView):
                 params = {"seriesId": request.query.get("seriesId", "")}
                 if request.query.get("seasonNumber"):
                     params["seasonNumber"] = request.query["seasonNumber"]
-                async with http.get(f"{base}/api/v3/episode", headers=hdrs, params=params) as r:
+                async with http.get(f"{base}/api/v3/episode", headers=hdrs, params=params, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "release" and method == "GET":
                 timeout = aiohttp.ClientTimeout(total=120)
                 params = {k: v for k, v in request.query.items()}
-                async with http.get(f"{base}/api/v3/release", headers=hdrs, params=params, timeout=timeout) as r:
+                async with http.get(f"{base}/api/v3/release", headers=hdrs, params=params, timeout=timeout, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "release" and method == "POST":
                 body = await request.json()
-                async with http.post(f"{base}/api/v3/release", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                async with http.post(f"{base}/api/v3/release", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "history" and method == "GET":
                 series_id = request.query.get("seriesId", "")
-                async with http.get(f"{base}/api/v3/history/series", headers=hdrs, params={"seriesId": series_id, "pageSize": "200"}) as r:
+                async with http.get(f"{base}/api/v3/history/series", headers=hdrs, params={"seriesId": series_id, "pageSize": "200"}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "episodefiles" and method == "GET":
                 series_id = request.query.get("seriesId", "")
-                async with http.get(f"{base}/api/v3/episodefile", headers=hdrs, params={"seriesId": series_id}) as r:
+                async with http.get(f"{base}/api/v3/episodefile", headers=hdrs, params={"seriesId": series_id}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "recentimports" and method == "GET":
-                async with http.get(f"{base}/api/v3/history", headers=hdrs, params={"pageSize": "100", "sortKey": "date", "sortDir": "desc"}) as r:
+                async with http.get(f"{base}/api/v3/history", headers=hdrs, params={"pageSize": "100", "sortKey": "date", "sortDir": "desc"}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path.startswith("series/") and method == "PUT":
                 series_id = path.split("/", 1)[1]
                 body = await request.json()
-                async with http.put(f"{base}/api/v3/series/{series_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                async with http.put(f"{base}/api/v3/series/{series_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "command" and method == "POST":
                 body = await request.json()
-                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             # Smaže seriál z knihovny
@@ -477,6 +539,7 @@ class ArrStackProxyView(HomeAssistantView):
                     headers=hdrs,
                     params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
                     timeout=aiohttp.ClientTimeout(total=60),
+                    ssl=ssl,
                 ) as r:
                     body = await r.read()
                     return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
@@ -493,25 +556,25 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "movies":
                 url = f"{base}/api/v3/movie"
                 if debug: _LOGGER.warning("arr_stack radarr2 → GET %s", url)
-                async with http.get(url, headers=hdrs) as r:
+                async with http.get(url, headers=hdrs, ssl=ssl) as r:
                     body = await r.read()
                     if debug: _LOGGER.warning("arr_stack radarr2 ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "profiles":
-                async with http.get(f"{base}/api/v3/qualityprofile", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/qualityprofile", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "tags":
-                async with http.get(f"{base}/api/v3/tag", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/tag", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "rootfolders":
-                async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "queue":
-                async with http.get(f"{base}/api/v3/queue?includeMovie=false&pageSize=100", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/queue?includeMovie=false&pageSize=100", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "release" and method == "GET":
@@ -519,12 +582,12 @@ class ArrStackProxyView(HomeAssistantView):
                 if not movie_id:
                     return web.json_response({"error": "movieId required"}, status=400)
                 timeout = aiohttp.ClientTimeout(total=120)
-                async with http.get(f"{base}/api/v3/release", headers=hdrs, params={"movieId": movie_id}, timeout=timeout) as r:
+                async with http.get(f"{base}/api/v3/release", headers=hdrs, params={"movieId": movie_id}, timeout=timeout, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "movie" and method == "POST":
                 body = await request.json()
-                async with http.post(f"{base}/api/v3/movie", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                async with http.post(f"{base}/api/v3/movie", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path.startswith("movie/") and method == "DELETE":
@@ -536,23 +599,24 @@ class ArrStackProxyView(HomeAssistantView):
                     headers=hdrs,
                     params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
                     timeout=aiohttp.ClientTimeout(total=60),
+                    ssl=ssl,
                 ) as r:
                     body = await r.read()
                     return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "release" and method == "POST":
                 body = await request.json()
-                async with http.post(f"{base}/api/v3/release", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                async with http.post(f"{base}/api/v3/release", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "history" and method == "GET":
                 movie_id = request.query.get("movieId", "")
-                async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}) as r:
+                async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "command" and method == "POST":
                 body = await request.json()
-                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
         # ════════════════════════════════════════════
@@ -565,25 +629,25 @@ class ArrStackProxyView(HomeAssistantView):
             hdrs = {"X-Api-Key": cfg.get(CONF_SONARR2_KEY, "")}
 
             if path == "profiles":
-                async with http.get(f"{base}/api/v3/qualityprofile", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/qualityprofile", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "tags":
-                async with http.get(f"{base}/api/v3/tag", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/tag", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "rootfolders":
-                async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "queue":
-                async with http.get(f"{base}/api/v3/queue?pageSize=200&includeUnknownSeriesItems=false", headers=hdrs) as r:
+                async with http.get(f"{base}/api/v3/queue?pageSize=200&includeUnknownSeriesItems=false", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "series" and method == "GET":
                 url = f"{base}/api/v3/series"
                 if debug: _LOGGER.warning("arr_stack sonarr2 → GET %s", url)
-                async with http.get(url, headers=hdrs) as r:
+                async with http.get(url, headers=hdrs, ssl=ssl) as r:
                     body = await r.read()
                     if debug: _LOGGER.warning("arr_stack sonarr2 ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
@@ -591,32 +655,32 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "release" and method == "GET":
                 timeout = aiohttp.ClientTimeout(total=120)
                 params = {k: v for k, v in request.query.items()}
-                async with http.get(f"{base}/api/v3/release", headers=hdrs, params=params, timeout=timeout) as r:
+                async with http.get(f"{base}/api/v3/release", headers=hdrs, params=params, timeout=timeout, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "release" and method == "POST":
                 body = await request.json()
-                async with http.post(f"{base}/api/v3/release", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                async with http.post(f"{base}/api/v3/release", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "history" and method == "GET":
                 series_id = request.query.get("seriesId", "")
-                async with http.get(f"{base}/api/v3/history/series", headers=hdrs, params={"seriesId": series_id, "pageSize": "200"}) as r:
+                async with http.get(f"{base}/api/v3/history/series", headers=hdrs, params={"seriesId": series_id, "pageSize": "200"}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "recentimports" and method == "GET":
-                async with http.get(f"{base}/api/v3/history", headers=hdrs, params={"pageSize": "100", "sortKey": "date", "sortDir": "desc"}) as r:
+                async with http.get(f"{base}/api/v3/history", headers=hdrs, params={"pageSize": "100", "sortKey": "date", "sortDir": "desc"}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path.startswith("series/") and method == "PUT":
                 series_id = path.split("/", 1)[1]
                 body = await request.json()
-                async with http.put(f"{base}/api/v3/series/{series_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                async with http.put(f"{base}/api/v3/series/{series_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "command" and method == "POST":
                 body = await request.json()
-                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body) as r:
+                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
         # ════════════════════════════════════════════
@@ -636,6 +700,7 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(
                     f"{base}/api/v1/discover/movies/upcoming?page={page}",
                     headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -648,6 +713,7 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(
                     f"{base}/api/v1/discover/movies?page={page}",
                     headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -660,6 +726,7 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(
                     f"{base}/api/v1/discover/trending?page={page}",
                     headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -672,6 +739,7 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(
                     f"{base}/api/v1/discover/tv/upcoming?page={page}",
                     headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -681,7 +749,8 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "radarr_settings":
                 async with http.get(
-                    f"{base}/api/v1/settings/radarr", headers=hdrs
+                    f"{base}/api/v1/settings/radarr", headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -691,7 +760,8 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "sonarr_settings":
                 async with http.get(
-                    f"{base}/api/v1/settings/sonarr", headers=hdrs
+                    f"{base}/api/v1/settings/sonarr", headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -701,7 +771,8 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path.startswith("movie/") or path.startswith("tv/"):
                 async with http.get(
-                    f"{base}/api/v1/{path}", headers=hdrs
+                    f"{base}/api/v1/{path}", headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -713,6 +784,7 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(
                     f"{base}/api/v1/request?filter=pending&take=20",
                     headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     data = await r.json()
 
@@ -728,7 +800,8 @@ class ArrStackProxyView(HomeAssistantView):
                     ep = "movie" if req.get("type") == "movie" else "tv"
                     try:
                         async with http.get(
-                            f"{base}/api/v1/{ep}/{tmdb_id}", headers=hdrs
+                            f"{base}/api/v1/{ep}/{tmdb_id}", headers=hdrs,
+                            ssl=ssl,
                         ) as mr:
                             if mr.status == 200:
                                 detail = await mr.json()
@@ -748,18 +821,20 @@ class ArrStackProxyView(HomeAssistantView):
                 try:
                     params = {"filter": "all", "take": "100"}
                     hdrs_json = {"Accept": "application/json"}
-                    fs = await self._seerr_family_sess()
+                    fs = await self._seerr_family_sess(ssl=ssl)
                     async with fs.get(
                         f"{base}/api/v1/request",
                         params=params,
                         headers=hdrs_json,
+                        ssl=ssl,
                     ) as r:
                         if r.status == 401:
-                            await self._seerr_family_login(fs)
+                            await self._seerr_family_login(fs, ssl=ssl)
                             async with fs.get(
                                 f"{base}/api/v1/request",
                                 params=params,
                                 headers=hdrs_json,
+                                ssl=ssl,
                             ) as r2:
                                 if r2.status == 200:
                                     return web.Response(body=await r2.read(),
@@ -776,7 +851,8 @@ class ArrStackProxyView(HomeAssistantView):
                 body = await request.json()
                 req_id = body.get("requestId")
                 async with http.delete(
-                    f"{base}/api/v1/request/{req_id}", headers=hdrs
+                    f"{base}/api/v1/request/{req_id}", headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.json_response({"ok": r.status in (200, 204)})
 
@@ -787,6 +863,7 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v1/request/{req_id}",
                     headers={**hdrs, "Content-Type": "application/json"},
                     json=body,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
@@ -801,6 +878,7 @@ class ArrStackProxyView(HomeAssistantView):
                         f"{base}/api/v1/request/{req_id}",
                         headers={**hdrs, "Content-Type": "application/json"},
                         json=server_settings,
+                        ssl=ssl,
                     ) as r_put:
                         put_status = r_put.status
                         _LOGGER.warning("arr_stack approve → PUT status=%s", put_status)
@@ -809,6 +887,7 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v1/request/{req_id}/approve",
                     headers={**hdrs, "Content-Type": "application/json"},
                     json={},
+                    ssl=ssl,
                 ) as r:
                     resp_body = await r.read()
                     _LOGGER.warning("arr_stack approve ← status=%s body=%s", r.status, resp_body[:300])
@@ -824,6 +903,7 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.post(
                     f"{base}/api/v1/request/{req_id}/decline",
                     headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -837,7 +917,7 @@ class ArrStackProxyView(HomeAssistantView):
                 page = str(body.get("page", 1))
                 url_str = f"{base}/api/v1/search?query={quote(query, safe='')}&page={page}"
                 search_url = yarl.URL(url_str, encoded=True)
-                async with http.get(search_url, headers=hdrs) as r:
+                async with http.get(search_url, headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "request" and method == "POST":
@@ -846,19 +926,21 @@ class ArrStackProxyView(HomeAssistantView):
 
                 # Rodinný účet — použij session cookie místo admin API klíče
                 if user_mode == "family" and self._cfg.get(CONF_SEERR_FAMILY_EMAIL):
-                    fs = await self._seerr_family_sess()
+                    fs = await self._seerr_family_sess(ssl=ssl)
                     async with fs.post(
                         f"{base}/api/v1/request",
                         json=body,
                         headers={"Accept": "application/json", "Content-Type": "application/json"},
+                        ssl=ssl,
                     ) as r:
                         if r.status == 401:
                             # Session vypršela — znovu se přihlásit a zkusit
-                            await self._seerr_family_login(fs)
+                            await self._seerr_family_login(fs, ssl=ssl)
                             async with fs.post(
                                 f"{base}/api/v1/request",
                                 json=body,
                                 headers={"Accept": "application/json", "Content-Type": "application/json"},
+                                ssl=ssl,
                             ) as r2:
                                 return web.Response(
                                     body=await r2.read(),
@@ -876,6 +958,7 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v1/request",
                     headers={**hdrs, "Content-Type": "application/json"},
                     json=body,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -897,7 +980,8 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "movies":
                 async with http.get(
-                    f"{base}/api/movies?start=0&length=500", headers=hdrs
+                    f"{base}/api/movies?start=0&length=500", headers=hdrs,
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -911,6 +995,7 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/episodes",
                     headers=hdrs,
                     params={"seriesid[]": series_id, "start": "0", "length": "500"},
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -923,8 +1008,19 @@ class ArrStackProxyView(HomeAssistantView):
         # ════════════════════════════════════════════
         elif service == "plex":
             token = cfg.get(CONF_PLEX_TOKEN, "")
-            base  = cfg.get(CONF_PLEX_URL, "").rstrip("/")
-            if not token or not base:
+            if not token:
+                return web.json_response([], status=200)
+            base = cfg.get(CONF_PLEX_URL, "").rstrip("/")
+            if not base:
+                # No manual URL — lazy auto-detect and cache
+                if not self._plex_url_cache:
+                    self._plex_url_cache = await _plex_detect_server(
+                        async_get_clientsession(self._hass), token
+                    )
+                base = self._plex_url_cache or ""
+            else:
+                self._plex_url_cache = None  # manual URL set — invalidate cache
+            if not base:
                 return web.json_response([], status=200)
 
             plex_hdrs = {
@@ -946,6 +1042,7 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}{img_path}",
                     headers=img_hdrs,
                     timeout=aiohttp.ClientTimeout(total=10),
+                    ssl=ssl,
                 ) as r:
                     ct = r.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
                     return web.Response(body=await r.read(), content_type=ct, status=r.status)
@@ -956,6 +1053,7 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/clients",
                     headers=plex_hdrs,
                     timeout=aiohttp.ClientTimeout(total=10),
+                    ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),
@@ -971,6 +1069,7 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/status/sessions",
                     headers=plex_hdrs,
                     timeout=aiohttp.ClientTimeout(total=10),
+                    ssl=ssl,
                 ) as r:
                     data = await r.json()
                     for item in data.get("MediaContainer", {}).get("Metadata", []):
@@ -1017,6 +1116,7 @@ class ArrStackProxyView(HomeAssistantView):
                             headers=direct_hdrs,
                             params={"protocol": "http", "port": "32400", "commandID": "0"},
                             timeout=aiohttp.ClientTimeout(total=5),
+                            ssl=ssl,
                         ) as sub_r:
                             await sub_r.read()
                     except Exception:
@@ -1026,6 +1126,7 @@ class ArrStackProxyView(HomeAssistantView):
                         headers=direct_hdrs,
                         params=params,
                         timeout=aiohttp.ClientTimeout(total=10),
+                        ssl=ssl,
                     ) as r:
                         await r.read()
                         return web.json_response({"ok": r.status < 400, "status": r.status}, status=200)
@@ -1041,6 +1142,7 @@ class ArrStackProxyView(HomeAssistantView):
                         headers=target_hdrs,
                         params=params,
                         timeout=aiohttp.ClientTimeout(total=10),
+                        ssl=ssl,
                     ) as r:
                         await r.read()
                         return web.json_response({"ok": r.status < 400, "status": r.status}, status=200)
@@ -1058,6 +1160,7 @@ class ArrStackProxyView(HomeAssistantView):
                     headers=plex_hdrs,
                     params={"sessionId": session_id, "reason": reason},
                     timeout=aiohttp.ClientTimeout(total=10),
+                    ssl=ssl,
                 ) as r:
                     await r.read()
                     return web.json_response({"ok": r.status < 400, "status": r.status}, status=200)
@@ -1199,6 +1302,7 @@ class ArrStackProxyView(HomeAssistantView):
                 f"{tautulli_url}/api/v2",
                 params=params,
                 timeout=aiohttp.ClientTimeout(total=15),
+                ssl=ssl,
             ) as r:
                 return web.Response(
                     body=await r.read(),
@@ -1233,6 +1337,7 @@ class ArrStackProxyView(HomeAssistantView):
                     headers=headers,
                     params=params,
                     timeout=aiohttp.ClientTimeout(total=15),
+                    ssl=ssl,
                 ) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
             elif method == "POST":
@@ -1242,6 +1347,7 @@ class ArrStackProxyView(HomeAssistantView):
                     headers=headers,
                     data=body,
                     timeout=aiohttp.ClientTimeout(total=15),
+                    ssl=ssl,
                 ) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 

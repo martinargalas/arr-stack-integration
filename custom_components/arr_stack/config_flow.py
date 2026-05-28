@@ -20,6 +20,7 @@ from .const import (
     CONF_PLEX_TOKEN, CONF_PLEX_URL, PLEX_CLIENT_ID,
     CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
     CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY,
+    CONF_SKIP_SSL_VERIFY,
 )
 
 
@@ -45,7 +46,7 @@ def _map_exc(e: Exception) -> str:
 
 # ── Validační funkce ─────────────────────────────────────────────────────────
 
-async def _test_qbit(session: aiohttp.ClientSession, url: str, user: str, password: str) -> str | None:
+async def _test_qbit(session: aiohttp.ClientSession, url: str, user: str, password: str, ssl=None) -> str | None:
     if not url:
         return None
     if err := _url_error(url):
@@ -57,6 +58,7 @@ async def _test_qbit(session: aiohttp.ClientSession, url: str, user: str, passwo
             data={"username": user, "password": password},
             headers={"Origin": base, "Referer": base + "/"},
             timeout=aiohttp.ClientTimeout(total=8),
+            ssl=ssl,
         ) as r:
             text = await r.text()
             if r.status in (200, 204) or text.strip().lower() in ("ok.", "ok"):
@@ -72,7 +74,7 @@ async def _test_qbit(session: aiohttp.ClientSession, url: str, user: str, passwo
         return _map_exc(e)
 
 
-async def _test_sabnzbd(session: aiohttp.ClientSession, url: str, key: str) -> str | None:
+async def _test_sabnzbd(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
     if not url:
         return None
     if err := _url_error(url):
@@ -82,6 +84,7 @@ async def _test_sabnzbd(session: aiohttp.ClientSession, url: str, key: str) -> s
             f"{url.rstrip('/')}/api",
             params={"mode": "version", "output": "json", "apikey": key},
             timeout=aiohttp.ClientTimeout(total=8),
+            ssl=ssl,
         ) as r:
             if r.status == 200:
                 data = await r.json()
@@ -94,7 +97,7 @@ async def _test_sabnzbd(session: aiohttp.ClientSession, url: str, key: str) -> s
         return _map_exc(e)
 
 
-async def _test_arr(session: aiohttp.ClientSession, url: str, key: str, name: str) -> str | None:
+async def _test_arr(session: aiohttp.ClientSession, url: str, key: str, name: str, ssl=None) -> str | None:
     if err := _url_error(url):
         return err
     try:
@@ -102,6 +105,7 @@ async def _test_arr(session: aiohttp.ClientSession, url: str, key: str, name: st
             f"{url.rstrip('/')}/api/v3/system/status",
             headers={"X-Api-Key": key},
             timeout=aiohttp.ClientTimeout(total=8),
+            ssl=ssl,
         ) as r:
             if r.status == 200:
                 return None
@@ -114,7 +118,7 @@ async def _test_arr(session: aiohttp.ClientSession, url: str, key: str, name: st
         return _map_exc(e)
 
 
-async def _test_overseerr(session: aiohttp.ClientSession, url: str, key: str) -> str | None:
+async def _test_overseerr(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
     if err := _url_error(url):
         return err
     try:
@@ -122,6 +126,7 @@ async def _test_overseerr(session: aiohttp.ClientSession, url: str, key: str) ->
             f"{url.rstrip('/')}/api/v1/settings/about",
             headers={"X-Api-Key": key, "Accept": "application/json"},
             timeout=aiohttp.ClientTimeout(total=8),
+            ssl=ssl,
         ) as r:
             if r.status == 200:
                 return None
@@ -135,7 +140,7 @@ async def _test_overseerr(session: aiohttp.ClientSession, url: str, key: str) ->
 
 
 async def _test_overseerr_family(
-    session: aiohttp.ClientSession, url: str, email: str, password: str
+    session: aiohttp.ClientSession, url: str, email: str, password: str, ssl=None
 ) -> str | None:
     if not email or not password:
         return None
@@ -145,6 +150,7 @@ async def _test_overseerr_family(
             json={"email": email, "password": password},
             headers={"Accept": "application/json"},
             timeout=aiohttp.ClientTimeout(total=8),
+            ssl=ssl,
         ) as r:
             if r.status in (401, 403):
                 return "seerr_family_bad_credentials"
@@ -158,7 +164,7 @@ async def _test_overseerr_family(
         return _map_exc(e)
 
 
-async def _test_tautulli(session: aiohttp.ClientSession, url: str, key: str) -> str | None:
+async def _test_tautulli(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
     if not url:
         return None
     if err := _url_error(url):
@@ -168,6 +174,7 @@ async def _test_tautulli(session: aiohttp.ClientSession, url: str, key: str) -> 
             f"{url.rstrip('/')}/api/v2",
             params={"apikey": key, "cmd": "get_activity"},
             timeout=aiohttp.ClientTimeout(total=8),
+            ssl=ssl,
         ) as r:
             if r.status == 200:
                 data = await r.json()
@@ -183,7 +190,7 @@ async def _test_tautulli(session: aiohttp.ClientSession, url: str, key: str) -> 
         return _map_exc(e)
 
 
-async def _test_jellystat(session: aiohttp.ClientSession, url: str, key: str) -> str | None:
+async def _test_jellystat(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
     if not url:
         return None
     if err := _url_error(url):
@@ -194,6 +201,7 @@ async def _test_jellystat(session: aiohttp.ClientSession, url: str, key: str) ->
             url.rstrip('/'),
             headers={"x-api-token": key, "Accept": "application/json"},
             timeout=aiohttp.ClientTimeout(total=8),
+            ssl=ssl,
         ) as r:
             if r.status < 500:
                 return None
@@ -202,7 +210,7 @@ async def _test_jellystat(session: aiohttp.ClientSession, url: str, key: str) ->
         return _map_exc(e)
 
 
-async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str) -> str | None:
+async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
     if not url:
         return None
     if err := _url_error(url):
@@ -212,6 +220,7 @@ async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str) -> st
             f"{url.rstrip('/')}/api/system/status",
             headers={"X-API-KEY": key, "Accept": "application/json"},
             timeout=aiohttp.ClientTimeout(total=8),
+            ssl=ssl,
         ) as r:
             if r.status == 200:
                 return None
@@ -230,6 +239,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Multi-step config flow s ověřením přístupu."""
 
     VERSION = 1
+    single_config_entry = True
 
     def __init__(self):
         self._data: dict = {}
@@ -242,10 +252,31 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._data = dict(self._reconfigure_entry.data)
         return await self.async_step_user()
 
-    # ── Krok 1: qBittorrent + SABnzbd (volitelné) ────────────────────────────
+    # ── Krok 0: Global Settings ───────────────────────────────────────────────
 
     async def async_step_user(self, user_input=None):
+        if not self._reconfigure_entry and self._async_current_entries():
+            return self.async_abort(reason="single_instance_allowed")
+
+        if user_input is not None:
+            self._data[CONF_SKIP_SSL_VERIFY] = user_input.get(CONF_SKIP_SSL_VERIFY, False)
+            return await self.async_step_downloads()
+
+        schema = vol.Schema({
+            vol.Optional(CONF_SKIP_SSL_VERIFY, default=self._data.get(CONF_SKIP_SSL_VERIFY, False)): bool,
+        })
+        return self.async_show_form(
+            step_id="user",
+            data_schema=schema,
+            errors={},
+            last_step=False,
+        )
+
+    # ── Krok 1: qBittorrent + SABnzbd (volitelné) ────────────────────────────
+
+    async def async_step_downloads(self, user_input=None):
         errors = {}
+        ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
         if user_input is not None:
             session = async_get_clientsession(self.hass)
@@ -255,6 +286,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 user_input.get(CONF_QBIT_URL, ""),
                 user_input.get(CONF_QBIT_USER, ""),
                 user_input.get(CONF_QBIT_PASS, ""),
+                ssl=ssl,
             )
             if err:
                 errors[CONF_QBIT_URL] = err
@@ -263,6 +295,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     session,
                     user_input.get(CONF_SAB_URL, ""),
                     user_input.get(CONF_SAB_KEY, ""),
+                    ssl=ssl,
                 )
                 if err:
                     errors[CONF_SAB_URL] = err
@@ -286,7 +319,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         }
         schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(
-            step_id="user",
+            step_id="downloads",
             data_schema=schema,
             errors=errors,
             last_step=False,
@@ -296,15 +329,16 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_media(self, user_input=None):
         errors = {}
+        ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
         if user_input is not None:
             session = async_get_clientsession(self.hass)
 
-            err = await _test_arr(session, user_input[CONF_RADARR_URL], user_input[CONF_RADARR_KEY], "radarr")
+            err = await _test_arr(session, user_input[CONF_RADARR_URL], user_input[CONF_RADARR_KEY], "radarr", ssl=ssl)
             if err:
                 errors[CONF_RADARR_URL] = err
             else:
-                err = await _test_arr(session, user_input[CONF_SONARR_URL], user_input[CONF_SONARR_KEY], "sonarr")
+                err = await _test_arr(session, user_input[CONF_SONARR_URL], user_input[CONF_SONARR_KEY], "sonarr", ssl=ssl)
                 if err:
                     errors[CONF_SONARR_URL] = err
 
@@ -334,6 +368,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_quality(self, user_input=None):
         errors = {}
+        ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
         if user_input is not None:
             session = async_get_clientsession(self.hass)
@@ -344,12 +379,12 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             sonarr4k_key = user_input.get(CONF_SONARR2_KEY, "").strip()
 
             if radarr4k_url:
-                err = await _test_arr(session, radarr4k_url, radarr4k_key, "radarr2")
+                err = await _test_arr(session, radarr4k_url, radarr4k_key, "radarr2", ssl=ssl)
                 if err:
                     errors[CONF_RADARR2_URL] = err
 
             if not errors and sonarr4k_url:
-                err = await _test_arr(session, sonarr4k_url, sonarr4k_key, "sonarr2")
+                err = await _test_arr(session, sonarr4k_url, sonarr4k_key, "sonarr2", ssl=ssl)
                 if err:
                     errors[CONF_SONARR2_URL] = err
 
@@ -379,6 +414,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_discovery(self, user_input=None):
         errors = {}
+        ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
         if user_input is not None:
             session = async_get_clientsession(self.hass)
@@ -386,7 +422,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             seerr_key = user_input.get(CONF_SEERR_KEY, "").strip()
 
             if seerr_url and seerr_key:
-                err = await _test_overseerr(session, seerr_url, seerr_key)
+                err = await _test_overseerr(session, seerr_url, seerr_key, ssl=ssl)
                 if err:
                     errors[CONF_SEERR_URL] = err
                 else:
@@ -395,6 +431,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         seerr_url,
                         user_input.get(CONF_SEERR_FAMILY_EMAIL, ""),
                         user_input.get(CONF_SEERR_FAMILY_PASS, ""),
+                        ssl=ssl,
                     )
                     if err:
                         errors[CONF_SEERR_FAMILY_EMAIL] = err
@@ -404,6 +441,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     session,
                     user_input.get(CONF_BAZARR_URL, ""),
                     user_input.get(CONF_BAZARR_KEY, ""),
+                    ssl=ssl,
                 )
                 if err:
                     errors[CONF_BAZARR_URL] = err
@@ -434,49 +472,34 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=False,
         )
 
-    # ── Krok 4: Plex (volitelné) + Tautulli (volitelné) ──────────────────────
+    # ── Krok 5: Plex (volitelné) ─────────────────────────────────────────────
 
     async def async_step_plex(self, user_input=None):
         errors = {}
 
         if user_input is not None:
-            session = async_get_clientsession(self.hass)
-            tautulli_url = user_input.get(CONF_TAUTULLI_URL, "")
-            tautulli_key = user_input.get(CONF_TAUTULLI_KEY, "")
+            if user_input.get("skip_plex"):
+                self._data[CONF_PLEX_TOKEN] = ""
+                self._data[CONF_PLEX_URL]   = ""
+                return await self.async_step_jellyfin()
 
-            err = await _test_tautulli(session, tautulli_url, tautulli_key)
-            if err:
-                errors[CONF_TAUTULLI_URL] = err
-
-            if not errors:
-                if user_input.get("skip_plex"):
-                    self._data[CONF_PLEX_TOKEN]   = ""
-                    self._data[CONF_PLEX_URL]     = ""
-                    self._data[CONF_TAUTULLI_URL] = tautulli_url
-                    self._data[CONF_TAUTULLI_KEY] = tautulli_key
+            manual_url = (user_input.get("plex_server_url") or "").strip().rstrip("/")
+            if manual_url and _url_error(manual_url):
+                errors["plex_server_url"] = "invalid_url"
+                self._plex_pin_id = None
+            elif self._plex_pin_id:
+                token, server_url = await self._poll_plex_pin()
+                if token:
+                    self._data[CONF_PLEX_TOKEN] = token
+                    self._data[CONF_PLEX_URL] = manual_url or server_url or ""
+                elif self._data.get(CONF_PLEX_TOKEN):
+                    # Store manual URL as-is (empty = auto-detect at proxy time)
+                    self._data[CONF_PLEX_URL] = manual_url
+                else:
+                    errors["base"] = "plex_not_authenticated"
+                    self._plex_pin_id = None
+                if not errors:
                     return await self.async_step_jellyfin()
-
-                if self._plex_pin_id:
-                    token, server_url = await self._poll_plex_pin()
-                    if token:
-                        self._data[CONF_PLEX_TOKEN] = token
-                        self._data[CONF_PLEX_URL]   = server_url or ""
-                    elif self._data.get(CONF_PLEX_TOKEN):
-                        # Keep existing token — user didn't re-authenticate
-                        pass
-                    else:
-                        errors["base"] = "plex_not_authenticated"
-                        self._plex_pin_id = None
-                    if not errors:
-                        self._data[CONF_TAUTULLI_URL] = tautulli_url
-                        self._data[CONF_TAUTULLI_KEY] = tautulli_key
-                        return await self.async_step_jellyfin()
-
-        existing_token = self._data.get(CONF_PLEX_TOKEN, "")
-        has_plex = bool(existing_token)
-        username = ""
-        if has_plex:
-            username = await self._get_plex_username(existing_token)
 
         try:
             pin_id, pin_code = await self._create_plex_pin()
@@ -491,35 +514,19 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors["base"] = "plex_pin_failed"
             auth_url = "https://plex.tv"
 
-        auth_steps = (
+        plex_section = (
             f"1. [Open Plex authentication]({auth_url})\n"
             f"2. Sign in and authorise **Arr Stack Card**\n"
             f"3. Return here and click **Submit**"
         )
-        if has_plex and username:
-            plex_section = (
-                f"✓ Plex connected as **{username}**\n\n"
-                f"To re-configure Plex:\n{auth_steps}"
-            )
-        else:
-            plex_section = (
-                f"{auth_steps}\n\n"
-                f"Or check **Skip Plex setup** below to skip."
-            )
 
-        # skip_plex first so it renders directly under the Plex description section
-        schema_fields = {}
-        if not has_plex:
-            schema_fields[vol.Optional("skip_plex", default=False)] = bool
-        schema_fields[vol.Optional(CONF_TAUTULLI_URL)] = str
-        schema_fields[vol.Optional(CONF_TAUTULLI_KEY)] = str
-        schema = vol.Schema(schema_fields)
-        ui = user_input or {}
-        suggested = {
-            CONF_TAUTULLI_URL: ui.get(CONF_TAUTULLI_URL) or self._data.get(CONF_TAUTULLI_URL, ""),
-            CONF_TAUTULLI_KEY: ui.get(CONF_TAUTULLI_KEY) or self._data.get(CONF_TAUTULLI_KEY, ""),
-        }
-        schema = self.add_suggested_values_to_schema(schema, suggested)
+        schema = vol.Schema({
+            vol.Optional("plex_server_url"): str,
+            vol.Optional("skip_plex", default=False): bool,
+        })
+        schema = self.add_suggested_values_to_schema(schema, {
+            "plex_server_url": self._data.get(CONF_PLEX_URL, ""),
+        })
         return self.async_show_form(
             step_id="plex",
             data_schema=schema,
@@ -528,32 +535,47 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=False,
         )
 
-    # ── Krok 6: Jellystat (volitelné) ────────────────────────────────────────
+    # ── Krok 6: Tautulli + Jellystat (volitelné) ────────────────────────────
 
     async def async_step_jellyfin(self, user_input=None):
         errors = {}
+        ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
         if user_input is not None:
             session = async_get_clientsession(self.hass)
+            tautulli_url  = user_input.get(CONF_TAUTULLI_URL, "")
+            tautulli_key  = user_input.get(CONF_TAUTULLI_KEY, "")
             jellystat_url = user_input.get(CONF_JELLYSTAT_URL, "")
             jellystat_key = user_input.get(CONF_JELLYSTAT_KEY, "")
 
-            err = await _test_jellystat(session, jellystat_url, jellystat_key)
+            err = await _test_tautulli(session, tautulli_url, tautulli_key, ssl=ssl)
             if err:
-                errors[CONF_JELLYSTAT_URL] = err
+                errors[CONF_TAUTULLI_URL] = err
 
             if not errors:
+                err = await _test_jellystat(session, jellystat_url, jellystat_key, ssl=ssl)
+                if err:
+                    errors[CONF_JELLYSTAT_URL] = err
+
+            if not errors:
+                self._data[CONF_TAUTULLI_URL]  = tautulli_url
+                self._data[CONF_TAUTULLI_KEY]  = tautulli_key
                 self._data[CONF_JELLYSTAT_URL] = jellystat_url
                 self._data[CONF_JELLYSTAT_KEY] = jellystat_key
                 return self._finish_flow()
 
         schema = vol.Schema({
+            vol.Optional(CONF_TAUTULLI_URL):  str,
+            vol.Optional(CONF_TAUTULLI_KEY):  str,
             vol.Optional(CONF_JELLYSTAT_URL): str,
             vol.Optional(CONF_JELLYSTAT_KEY): str,
         })
+        ui = user_input or {}
         suggested = {
-            CONF_JELLYSTAT_URL: self._data.get(CONF_JELLYSTAT_URL, ""),
-            CONF_JELLYSTAT_KEY: self._data.get(CONF_JELLYSTAT_KEY, ""),
+            CONF_TAUTULLI_URL:  ui.get(CONF_TAUTULLI_URL)  or self._data.get(CONF_TAUTULLI_URL, ""),
+            CONF_TAUTULLI_KEY:  ui.get(CONF_TAUTULLI_KEY)  or self._data.get(CONF_TAUTULLI_KEY, ""),
+            CONF_JELLYSTAT_URL: ui.get(CONF_JELLYSTAT_URL) or self._data.get(CONF_JELLYSTAT_URL, ""),
+            CONF_JELLYSTAT_KEY: ui.get(CONF_JELLYSTAT_KEY) or self._data.get(CONF_JELLYSTAT_KEY, ""),
         }
         schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(
@@ -642,11 +664,28 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 for res in resources:
                     if res.get("product") == "Plex Media Server":
                         conns = res.get("connections", [])
-                        local = [c for c in conns if c.get("local") and not c.get("relay")]
-                        if local:
-                            return local[0]["uri"]
-                        if conns:
-                            return conns[0]["uri"]
+                        # Local-first, then others — but test reachability from this HA instance
+                        local  = [c for c in conns if c.get("local") and not c.get("relay")]
+                        remote = [c for c in conns if not c.get("local") and not c.get("relay")]
+                        candidates = local + remote
+                        for c in candidates:
+                            uri = c.get("uri", "").rstrip("/")
+                            if not uri:
+                                continue
+                            try:
+                                async with session.get(
+                                    f"{uri}/",
+                                    headers=headers,
+                                    timeout=aiohttp.ClientTimeout(total=4),
+                                    allow_redirects=False,
+                                ) as probe:
+                                    if probe.status < 500:
+                                        return uri
+                            except Exception:
+                                continue
+                        # All probes failed — return first candidate as-is (better than nothing)
+                        if candidates:
+                            return candidates[0].get("uri", "").rstrip("/")
         except Exception:
             pass
         return ""
