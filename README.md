@@ -62,9 +62,15 @@ Browsers block direct API calls from a web page to local network services (CORS 
 
 ## Setup Wizard
 
-The integration is configured via a 6-step wizard.
+The integration is configured via a 7-step wizard.
 
-**Step 1 — Downloads** *(all optional)*
+**Step 1 — Global Settings**
+
+| Field | Default | Notes |
+|-------|---------|-------|
+| Skip SSL certificate verification | Off | Enable if any of your services use a self-signed or untrusted certificate (e.g. behind a reverse proxy). Applies to all services at once. Safe to enable even in mixed setups — services with valid certificates or plain HTTP are unaffected. |
+
+**Step 2 — Downloads** *(all optional)*
 
 | Field | Example |
 |-------|---------|
@@ -74,7 +80,7 @@ The integration is configured via a 6-step wizard.
 | SABnzbd URL | `http://192.168.1.10:8080` |
 | SABnzbd API key | `••••` |
 
-**Step 2 — Media Management** *(required)*
+**Step 3 — Media Management** *(required)*
 
 | Field | Example |
 |-------|---------|
@@ -83,7 +89,7 @@ The integration is configured via a 6-step wizard.
 | Sonarr URL | `http://192.168.1.10:8989` |
 | Sonarr API key | `••••` |
 
-**Step 3 — Second instances** *(all optional)*
+**Step 4 — Second instances** *(all optional)*
 
 Configure a second Radarr and/or Sonarr instance — useful for HD + 4K setups.
 
@@ -94,7 +100,7 @@ Configure a second Radarr and/or Sonarr instance — useful for HD + 4K setups.
 | Sonarr 2 URL | `http://192.168.1.10:8990` |
 | Sonarr 2 API key | `••••` |
 
-**Step 4 — Discovery & Subtitles** *(all optional)*
+**Step 5 — Discovery & Subtitles** *(all optional)*
 
 Trending, popular, and upcoming sections are always available. Overseerr/Jellyseerr adds request approval workflow and family account support.
 
@@ -107,24 +113,25 @@ Trending, popular, and upcoming sections are always available. Overseerr/Jellyse
 | Bazarr URL | `http://192.168.1.10:6767` | Optional |
 | Bazarr API key | `••••` | Optional |
 
-**Step 5 — Plex & Tautulli** *(both optional)*
+**Step 6 — Plex** *(optional)*
 
 | Field | Notes |
 |-------|-------|
 | Plex | Authenticate via the Plex login link — enables stream monitoring and playback control |
-| Tautulli URL | `http://192.168.1.10:8181` |
-| Tautulli API key | Found in Tautulli → Settings → Web Interface → API Key |
+| Plex Server URL | Leave empty to auto-detect. Fill in if auto-detection picks the wrong address — e.g. when HA runs on a different machine or VLAN than Plex (`https://plex.yourdomain.com` or `http://192.168.1.10:32400`). |
 
-> **Note — Plex Now Playing** requires the [Plex integration](https://www.home-assistant.io/integrations/plex/) installed in HA. It creates `media_player.plex_*` entities that the card reads for active sessions. Authenticating Plex here (Step 5) additionally enables playback control (pause / resume / stop) and shows the active user on each stream card.
+> **Note — Plex Now Playing** requires the [Plex integration](https://www.home-assistant.io/integrations/plex/) installed in HA. It creates `media_player.plex_*` entities that the card reads for active sessions. Authenticating Plex here (Step 6) additionally enables playback control (pause / resume / stop) and shows the active user on each stream card.
 
-> **Note — Tautulli account sharing detection** scans recent watch history to identify users streaming from multiple IP addresses and alerts you via the Statistics section. Configure threshold and history depth via `security.*` keys in the card YAML.
-
-**Step 6 — Jellystat** *(optional)*
+**Step 7 — Tautulli & Jellystat** *(both optional)*
 
 | Field | Notes |
 |-------|-------|
-| Jellystat URL | `http://192.168.1.10:3000` |
+| Tautulli URL | `http://192.168.1.10:8181` |
+| Tautulli API key | Found in Tautulli → Settings → Web Interface → API Key |
+| Jellystat URL | `http://192.168.1.10:4000` |
 | Jellystat API key | Found in Jellystat → Settings → API Key |
+
+> **Note — Tautulli account sharing detection** scans recent watch history to identify users streaming from multiple IP addresses and alerts you via the Statistics section. Configure threshold and history depth via `security.*` keys in the card YAML.
 
 ---
 
