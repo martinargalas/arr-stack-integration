@@ -146,6 +146,9 @@ class ArrStackProxyView(HomeAssistantView):
     async def post(self, request: web.Request, service: str, path: str) -> web.Response:
         return await self._handle(request, service, path, "POST")
 
+    async def put(self, request: web.Request, service: str, path: str) -> web.Response:
+        return await self._handle(request, service, path, "PUT")
+
     async def delete(self, request: web.Request, service: str, path: str) -> web.Response:
         return await self._handle(request, service, path, "DELETE")
 
@@ -424,6 +427,22 @@ class ArrStackProxyView(HomeAssistantView):
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
 
+            if path == "wanted/missing" and method == "GET":
+                page      = request.query.get("page", "1")
+                page_size = request.query.get("pageSize", "250")
+                sort_key  = request.query.get("sortKey", "title")
+                sort_dir  = request.query.get("sortDir", "asc")
+                sort_dir  = "descending" if sort_dir in ("desc", "descending") else "ascending"
+                async with http.get(f"{base}/api/v3/wanted/missing", headers=hdrs, params={"page": page, "pageSize": page_size, "sortKey": sort_key, "sortDirection": sort_dir, "includeMovie": "true"}, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path.startswith("movie/") and method == "PUT":
+                movie_id = path.split("/", 1)[1]
+                body = await request.json()
+                async with http.put(f"{base}/api/v3/movie/{movie_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+
             if path == "manualimport" and method == "GET":
                 download_id = request.query.get("downloadId", "")
                 movie_id    = request.query.get("movieId", "")
@@ -594,6 +613,20 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path == "wanted/missing" and method == "GET":
+                page      = request.query.get("page", "1")
+                page_size = request.query.get("pageSize", "250")
+                sort_key  = request.query.get("sortKey", "airDateUtc")
+                sort_dir  = request.query.get("sortDir", "desc")
+                sort_dir  = "descending" if sort_dir in ("desc", "descending") else "ascending"
+                req_url = f"{base}/api/v3/wanted/missing"
+                req_params = {"page": page, "pageSize": page_size, "sortKey": sort_key, "sortDirection": sort_dir, "includeSeries": "true"}
+                _LOGGER.warning("arr_stack sonarr wanted/missing → GET %s params=%s", req_url, req_params)
+                async with http.get(req_url, headers=hdrs, params=req_params, ssl=ssl) as r:
+                    body = await r.read()
+                    _LOGGER.warning("arr_stack sonarr wanted/missing ← status=%s body_start=%s", r.status, body[:200])
+                    return web.Response(body=body, content_type="application/json", status=r.status)
+
             # Smaže seriál z knihovny
             if path.startswith("series/") and method == "DELETE":
                 series_id = path.split("/", 1)[1]
@@ -751,6 +784,22 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path == "wanted/missing" and method == "GET":
+                page      = request.query.get("page", "1")
+                page_size = request.query.get("pageSize", "250")
+                sort_key  = request.query.get("sortKey", "title")
+                sort_dir  = request.query.get("sortDir", "asc")
+                sort_dir  = "descending" if sort_dir in ("desc", "descending") else "ascending"
+                async with http.get(f"{base}/api/v3/wanted/missing", headers=hdrs, params={"page": page, "pageSize": page_size, "sortKey": sort_key, "sortDirection": sort_dir, "includeMovie": "true"}, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path.startswith("movie/") and method == "PUT":
+                movie_id = path.split("/", 1)[1]
+                body = await request.json()
+                async with http.put(f"{base}/api/v3/movie/{movie_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+
 
             if path == "manualimport" and method == "GET":
                 download_id = request.query.get("downloadId", "")
@@ -840,6 +889,16 @@ class ArrStackProxyView(HomeAssistantView):
                     if debug: _LOGGER.warning("arr_stack sonarr2 ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
 
+            if path == "series" and method == "POST":
+                body = await request.json()
+                async with http.post(
+                    f"{base}/api/v3/series",
+                    headers={**hdrs, "Content-Type": "application/json"},
+                    json=body,
+                    ssl=ssl,
+                ) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "release" and method == "GET":
                 timeout = aiohttp.ClientTimeout(total=120)
                 params = {k: v for k, v in request.query.items()}
@@ -849,6 +908,29 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "release" and method == "POST":
                 body = await request.json()
                 async with http.post(f"{base}/api/v3/release", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "lookup" and method == "GET":
+                tvdb_id = request.query.get("tvdbId", "")
+                term = f"tvdb:{tvdb_id}" if tvdb_id else request.query.get("term", "")
+                async with http.get(f"{base}/api/v3/series/lookup", headers=hdrs, params={"term": term}, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "calendar":
+                params = {**dict(request.query), "includeSeries": "true", "unmonitored": "false"}
+                async with http.get(f"{base}/api/v3/calendar", headers=hdrs, params=params, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "episodes" and method == "GET":
+                params = {"seriesId": request.query.get("seriesId", "")}
+                if request.query.get("seasonNumber"):
+                    params["seasonNumber"] = request.query["seasonNumber"]
+                async with http.get(f"{base}/api/v3/episode", headers=hdrs, params=params, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "episodefiles" and method == "GET":
+                series_id = request.query.get("seriesId", "")
+                async with http.get(f"{base}/api/v3/episodefile", headers=hdrs, params={"seriesId": series_id}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "history" and method == "GET":
@@ -866,10 +948,34 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.put(f"{base}/api/v3/series/{series_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path.startswith("series/") and method == "DELETE":
+                series_id = path.split("/", 1)[1]
+                delete_files = request.query.get("deleteFiles", "false")
+                add_exclusion = request.query.get("addExclusion", "false")
+                async with http.delete(
+                    f"{base}/api/v3/series/{series_id}",
+                    headers=hdrs,
+                    params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
+                    timeout=aiohttp.ClientTimeout(total=60),
+                    ssl=ssl,
+                ) as r:
+                    body = await r.read()
+                    return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
+
             if path == "command" and method == "POST":
                 body = await request.json()
                 async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "wanted/missing" and method == "GET":
+                page      = request.query.get("page", "1")
+                page_size = request.query.get("pageSize", "250")
+                sort_key  = request.query.get("sortKey", "airDateUtc")
+                sort_dir  = request.query.get("sortDir", "desc")
+                sort_dir  = "descending" if sort_dir in ("desc", "descending") else "ascending"
+                async with http.get(f"{base}/api/v3/wanted/missing", headers=hdrs, params={"page": page, "pageSize": page_size, "sortKey": sort_key, "sortDirection": sort_dir, "includeSeries": "true"}, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
 
             if path == "manualimport" and method == "GET":
                 download_id = request.query.get("downloadId", "")
@@ -883,6 +989,39 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "manualimport" and method == "POST":
                 body = await request.json()
                 async with http.post(f"{base}/api/v3/manualimport", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "activity/history" and method == "GET":
+                page       = request.query.get("page", "1")
+                page_size  = request.query.get("pageSize", "20")
+                sort_key   = request.query.get("sortKey", "date")
+                sort_dir   = request.query.get("sortDir", "desc")
+                sort_dir   = "descending" if sort_dir in ("desc", "descending") else "ascending"
+                event_type = request.query.get("eventType", "")
+                _event_map = {"grabbed":2,"downloadFolderImported":3,"downloadFailed":4,"movieFileDeleted":5,"movieFolderImported":6,"movieFileRenamed":7,"episodeFileDeleted":5,"episodeFileRenamed":6,"downloadIgnored":7,"seriesFolderImported":8}
+                params = {"page": page, "pageSize": page_size, "sortKey": sort_key, "sortDirection": sort_dir, "includeSeries": "true", "includeEpisode": "true"}
+                if event_type:
+                    params["eventType"] = _event_map.get(event_type, event_type)
+                async with http.get(f"{base}/api/v3/history", headers=hdrs, params=params, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "activity/blocklist" and method == "GET":
+                page      = request.query.get("page", "1")
+                page_size = request.query.get("pageSize", "20")
+                async with http.get(f"{base}/api/v3/blocklist", headers=hdrs, params={"page": page, "pageSize": page_size}, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path.startswith("activity/blocklist/") and method == "DELETE":
+                bl_id = path.split("/")[-1]
+                async with http.delete(f"{base}/api/v3/blocklist/{bl_id}", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path.startswith("queue/") and method == "DELETE":
+                q_id = path.split("/")[-1]
+                remove = request.query.get("removeFromClient", "true")
+                blocklist_param = request.query.get("blocklist", "false")
+                skip = request.query.get("skipRedownload", "false")
+                async with http.delete(f"{base}/api/v3/queue/{q_id}", headers=hdrs, params={"removeFromClient": remove, "blocklist": blocklist_param, "skipRedownload": skip}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
         # ════════════════════════════════════════════
