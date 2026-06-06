@@ -28,13 +28,14 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Sonarr | TV show library management | ✅ Yes |
 | Radarr 2 | Second Radarr instance (e.g. 4K) | Optional |
 | Sonarr 2 | Second Sonarr instance (e.g. 4K) | Optional |
-| Overseerr / Jellyseerr | Media discovery & requests | Optional |
 | qBittorrent | Torrent download client | Optional |
 | SABnzbd | Usenet download client | Optional |
+| Overseerr / Jellyseerr | Media discovery & requests | Optional |
 | Bazarr | Subtitle management | Optional |
 | Plex | Stream monitoring & playback control | Optional |
 | Tautulli | Watch history, statistics & account sharing detection | Optional |
 | Jellystat | Watch history and statistics | Optional |
+| Trakt | Personalised movie & show recommendations | Optional |
 
 ---
 
@@ -45,7 +46,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 1. Open HACS → **Integrations**
 2. Click the **⋮** menu (top right) → **Custom repositories**
 3. Add `https://github.com/martinargalas/arr-stack-integration` — category **Integration**
-4. Click **+ Explore & Download Repositories**, search for **Arr Stack Integration** and install
+4. Search for **Arr Stack Integration** and install
 5. Restart Home Assistant
 6. Go to **Settings → Devices & Services → + Add Integration**
 7. Search for **Arr Stack** and follow the setup wizard
@@ -62,15 +63,42 @@ Browsers block direct API calls from a web page to local network services (CORS 
 
 ## Setup Wizard
 
-The integration is configured via a 7-step wizard.
+Setup starts with two steps that are always shown, followed by steps for the services you select.
 
-**Step 1 — Global Settings**
+### Global Settings
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| Skip SSL certificate verification | Off | Enable if any of your services use a self-signed or untrusted certificate (e.g. behind a reverse proxy). Applies to all services at once. Safe to enable even in mixed setups — services with valid certificates or plain HTTP are unaffected. |
+| Skip SSL certificate verification | Off | Enable if any of your services use a self-signed or untrusted certificate. Applies to all services at once. |
 
-**Step 2 — Downloads** *(all optional)*
+### Service Selection
+
+Choose which optional services you want to configure. Only the selected steps will appear. **Radarr and Sonarr are always configured** — they are required for the card to work.
+
+| Toggle | Services configured |
+|--------|-------------------|
+| Downloads | qBittorrent, SABnzbd |
+| 2nd instances | Radarr 2, Sonarr 2 |
+| Bazarr | Bazarr |
+| Discovery | Overseerr / Jellyseerr |
+| Plex | Plex |
+| Streaming stats | Tautulli, Jellystat |
+| Trakt | Trakt |
+
+---
+
+### Media — Radarr + Sonarr *(required)*
+
+| Field | Example |
+|-------|---------|
+| Radarr URL | `http://192.168.1.10:7878` |
+| Radarr API key | Find in Radarr → Settings → General |
+| Sonarr URL | `http://192.168.1.10:8989` |
+| Sonarr API key | Find in Sonarr → Settings → General |
+
+---
+
+### Downloads — qBittorrent + SABnzbd *(optional)*
 
 | Field | Example |
 |-------|---------|
@@ -78,18 +106,13 @@ The integration is configured via a 7-step wizard.
 | qBittorrent username | `admin` |
 | qBittorrent password | `••••` |
 | SABnzbd URL | `http://192.168.1.10:8080` |
-| SABnzbd API key | `••••` |
+| SABnzbd API key | Find in SABnzbd → Config → General |
 
-**Step 3 — Media Management** *(required)*
+Leave any field empty to skip that service individually.
 
-| Field | Example |
-|-------|---------|
-| Radarr URL | `http://192.168.1.10:7878` |
-| Radarr API key | `••••` |
-| Sonarr URL | `http://192.168.1.10:8989` |
-| Sonarr API key | `••••` |
+---
 
-**Step 4 — Second instances** *(all optional)*
+### 2nd instances — Radarr 2 + Sonarr 2 *(optional)*
 
 Configure a second Radarr and/or Sonarr instance — useful for HD + 4K setups.
 
@@ -100,60 +123,84 @@ Configure a second Radarr and/or Sonarr instance — useful for HD + 4K setups.
 | Sonarr 2 URL | `http://192.168.1.10:8990` |
 | Sonarr 2 API key | `••••` |
 
-**Step 5 — Discovery & Subtitles** *(all optional)*
+---
 
-Trending, popular, and upcoming sections are always available. Overseerr/Jellyseerr adds request approval workflow and family account support.
+### Bazarr *(optional)*
 
-| Field | Example | Notes |
-|-------|---------|-------|
-| Overseerr / Jellyseerr URL | `http://192.168.1.10:5055` | Optional |
-| Overseerr / Jellyseerr API key | `••••` | Optional |
-| Family account email | `user@example.com` | Optional — non-admin account for household users |
-| Family account password | `••••` | Optional |
-| Bazarr URL | `http://192.168.1.10:6767` | Optional |
-| Bazarr API key | `••••` | Optional |
+| Field | Example |
+|-------|---------|
+| Bazarr URL | `http://192.168.1.10:6767` |
+| Bazarr API key | Find in Bazarr → Settings → General |
 
-**Step 6 — Plex** *(optional)*
+---
+
+### Discovery — Overseerr / Jellyseerr *(optional)*
+
+Trending, popular, and upcoming sections are always available without Overseerr. Adding it enables request approvals and family account support.
 
 | Field | Notes |
 |-------|-------|
-| Plex | Authenticate via the Plex login link — enables stream monitoring and playback control |
-| Plex Server URL | Leave empty to auto-detect. Fill in if auto-detection picks the wrong address — e.g. when HA runs on a different machine or VLAN than Plex (`https://plex.yourdomain.com` or `http://192.168.1.10:32400`). |
+| Overseerr / Jellyseerr URL | `http://192.168.1.10:5055` |
+| Overseerr / Jellyseerr API key | Find in Settings → General |
+| Family account email | Optional — non-admin account for household members |
+| Family account password | Optional |
 
-> **Note — Plex Now Playing** requires the [Plex integration](https://www.home-assistant.io/integrations/plex/) installed in HA. It creates `media_player.plex_*` entities that the card reads for active sessions. Authenticating Plex here (Step 6) additionally enables playback control (pause / resume / stop) and shows the active user on each stream card.
+---
 
-**Step 7 — Tautulli & Jellystat** *(both optional)*
+### Plex *(optional)*
+
+Authenticate via the Plex login link shown during setup. This enables stream monitoring, active user display, and playback control.
+
+| Field | Notes |
+|-------|-------|
+| Plex Server URL | Leave empty to auto-detect. Fill in if HA runs on a different machine or VLAN than Plex — e.g. `http://192.168.1.10:32400`. |
+
+> **Note:** Plex Now Playing in the card also requires the official [Plex integration](https://www.home-assistant.io/integrations/plex/) installed in HA.
+
+---
+
+### Streaming stats — Tautulli + Jellystat *(optional)*
 
 | Field | Notes |
 |-------|-------|
 | Tautulli URL | `http://192.168.1.10:8181` |
-| Tautulli API key | Found in Tautulli → Settings → Web Interface → API Key |
+| Tautulli API key | Find in Tautulli → Settings → Web Interface |
 | Jellystat URL | `http://192.168.1.10:4000` |
-| Jellystat API key | Found in Jellystat → Settings → API Key |
+| Jellystat API key | Find in Jellystat → Settings |
 
-> **Note — Tautulli account sharing detection** scans recent watch history to identify users streaming from multiple IP addresses and alerts you via the Statistics section. Configure threshold and history depth via `security.*` keys in the card YAML.
+> Tautulli also powers **account sharing detection** — alerts when the same user streams from multiple IPs simultaneously.
+
+---
+
+### Trakt *(optional)*
+
+Enables personalised movie and show recommendations in the card based on your Trakt watch history.
+
+1. Go to [trakt.tv/oauth/applications/new](https://trakt.tv/oauth/applications/new) and create a new application (redirect URI: `urn:ietf:wg:oauth:2.0:oob`)
+2. Copy the **Client ID** and **Client Secret** into the setup step
+3. Visit the shown URL on trakt.tv, enter the code, then click Submit
 
 ---
 
 ## Family Account
 
-If you configure a family account (non-admin Overseerr/Jellyseerr user), the card will use that account for media requests when the logged-in HA user is not an admin. This allows household members to request media without admin privileges.
+If you configure a family account (non-admin Overseerr/Jellyseerr user), the card uses that account for media requests made by non-admin HA users. This lets household members request media without admin privileges.
 
 ---
 
 ## Sensors & entities
 
-This integration currently does not expose any Home Assistant sensors, entities, or devices. It acts purely as a proxy — all data is fetched on demand by the card and displayed directly.
+This integration does not expose any Home Assistant sensors, entities, or devices. It acts purely as a proxy — all data is fetched on demand by the card.
 
 ---
 
 ## Reconfigure
 
-You can change the integration settings at any time without reinstalling:
+Change any setting at any time without reinstalling:
 
 **Settings → Devices & Services → Arr Stack → ⋮ → Reconfigure**
 
-All fields support being cleared — removing a URL disables that service in the card.
+Your existing settings are pre-filled. Clearing a URL disables that service in the card.
 
 ---
 
