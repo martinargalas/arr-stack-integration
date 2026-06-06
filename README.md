@@ -176,6 +176,8 @@ Authenticate via the Plex login link shown during setup. This enables stream mon
 
 Enables personalised movie and show recommendations in the card based on your Trakt watch history.
 
+> **Note:** Recommendations are only as good as your watch history on Trakt. To keep it in sync automatically, use a scrobbler such as [PlexTraktSync](https://github.com/Taxel/PlexTraktSync).
+
 1. Go to [trakt.tv/oauth/applications/new](https://trakt.tv/oauth/applications/new) and create a new application (redirect URI: `urn:ietf:wg:oauth:2.0:oob`)
 2. Copy the **Client ID** and **Client Secret** into the setup step
 3. Visit the shown URL on trakt.tv, enter the code, then click Submit
