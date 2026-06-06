@@ -176,7 +176,7 @@ Authenticate via the Plex login link shown during setup. This enables stream mon
 
 Enables personalised movie and show recommendations in the card based on your Trakt watch history.
 
-> **Note:** Recommendations are only as good as your watch history on Trakt. To keep it in sync automatically, use a scrobbler such as [PlexTraktSync](https://github.com/Taxel/PlexTraktSync).
+> **Scrobbling required for personalised results.** Trakt recommendations are based on your watch history — titles you've already seen are filtered out and the suggestions are tailored to your taste. For this to work, your plays need to be synced to Trakt automatically. If you use Plex, [PlexTraktSync](https://github.com/Taxel/PlexTraktSync) is a good option — run it as a Docker container in `watch` mode and it will mark titles as watched on Trakt in real time as you finish them.
 
 1. Go to [trakt.tv/oauth/applications/new](https://trakt.tv/oauth/applications/new) and create a new application (redirect URI: `urn:ietf:wg:oauth:2.0:oob`)
 2. Copy the **Client ID** and **Client Secret** into the setup step
