@@ -1,4 +1,4 @@
-"""Config flow — 5 kroků s ověřením přístupu ke každé službě."""
+"""Config flow — dynamic step selection."""
 import aiohttp
 import voluptuous as vol
 
@@ -20,6 +20,9 @@ from .const import (
     CONF_PLEX_TOKEN, CONF_PLEX_URL, PLEX_CLIENT_ID,
     CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
     CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY,
+    CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET,
+    CONF_TRAKT_ACCESS_TOKEN, CONF_TRAKT_REFRESH_TOKEN, CONF_TRAKT_EXPIRES_AT,
+    TRAKT_API_BASE,
     CONF_SKIP_SSL_VERIFY,
 )
 
@@ -27,7 +30,6 @@ from .const import (
 # ── Pomocné funkce pro chyby ─────────────────────────────────────────────────
 
 def _url_error(url: str) -> str | None:
-    """Vrátí chybový kód pokud URL chybí schéma nebo je jinak zjevně špatná."""
     if not url.startswith(("http://", "https://")):
         return "invalid_url"
     return None
@@ -196,7 +198,6 @@ async def _test_jellystat(session: aiohttp.ClientSession, url: str, key: str, ss
     if err := _url_error(url):
         return err
     try:
-        # Just verify server is reachable — Jellystat API endpoint paths vary by version
         async with session.get(
             url.rstrip('/'),
             headers={"x-api-token": key, "Accept": "application/json"},
@@ -235,8 +236,12 @@ async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str, ssl=N
 
 # ── Config Flow ──────────────────────────────────────────────────────────────
 
+# All configurable step groups in order
+_ALL_STEPS = ['media', 'downloads', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt']
+
+
 class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Multi-step config flow s ověřením přístupu."""
+    """Multi-step config flow with dynamic step selection."""
 
     VERSION = 1
     single_config_entry = True
@@ -246,13 +251,22 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._reconfigure_entry = None
         self._plex_pin_id: int | None = None
         self._plex_pin_code: str | None = None
+        self._step_queue: list = []
+
+    # ── Queue helper ─────────────────────────────────────────────────────────
+
+    async def _next_step(self):
+        if not self._step_queue:
+            return self._finish_flow()
+        step = self._step_queue.pop(0)
+        return await getattr(self, f'async_step_{step}')()
+
+    # ── Krok 0: Global Settings ───────────────────────────────────────────────
 
     async def async_step_reconfigure(self, user_input=None):
         self._reconfigure_entry = self._get_reconfigure_entry()
         self._data = dict(self._reconfigure_entry.data)
         return await self.async_step_user()
-
-    # ── Krok 0: Global Settings ───────────────────────────────────────────────
 
     async def async_step_user(self, user_input=None):
         if not self._reconfigure_entry and self._async_current_entries():
@@ -260,7 +274,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             self._data[CONF_SKIP_SSL_VERIFY] = user_input.get(CONF_SKIP_SSL_VERIFY, False)
-            return await self.async_step_downloads()
+            return await self.async_step_service_selection()
 
         schema = vol.Schema({
             vol.Optional(CONF_SKIP_SSL_VERIFY, default=self._data.get(CONF_SKIP_SSL_VERIFY, False)): bool,
@@ -272,7 +286,36 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=False,
         )
 
-    # ── Krok 1: qBittorrent + SABnzbd (volitelné) ────────────────────────────
+    # ── Krok 1: Výběr služeb ─────────────────────────────────────────────────
+
+    async def async_step_service_selection(self, user_input=None):
+        if user_input is not None:
+            # media is always included — mandatory
+            optional_steps = ['downloads', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt']
+            selected = ['media'] + [s for s in optional_steps if user_input.get(f'enable_{s}', False)]
+            # preserve order from _ALL_STEPS
+            self._step_queue = [s for s in _ALL_STEPS if s in selected]
+            return await self._next_step()
+
+        # Derive defaults from existing data
+        d = self._data
+        schema = vol.Schema({
+            vol.Optional('enable_downloads', default=bool(d.get(CONF_QBIT_URL) or d.get(CONF_SAB_URL))): bool,
+            vol.Optional('enable_quality',   default=bool(d.get(CONF_RADARR2_URL) or d.get(CONF_SONARR2_URL))): bool,
+            vol.Optional('enable_bazarr',    default=bool(d.get(CONF_BAZARR_URL))): bool,
+            vol.Optional('enable_discovery', default=bool(d.get(CONF_SEERR_URL))): bool,
+            vol.Optional('enable_plex',      default=bool(d.get(CONF_PLEX_TOKEN))): bool,
+            vol.Optional('enable_jellyfin',  default=bool(d.get(CONF_TAUTULLI_URL) or d.get(CONF_JELLYSTAT_URL))): bool,
+            vol.Optional('enable_trakt',     default=bool(d.get(CONF_TRAKT_CLIENT_ID))): bool,
+        })
+        return self.async_show_form(
+            step_id="service_selection",
+            data_schema=schema,
+            errors={},
+            last_step=False,
+        )
+
+    # ── Downloads: qBittorrent + SABnzbd ─────────────────────────────────────
 
     async def async_step_downloads(self, user_input=None):
         errors = {}
@@ -303,7 +346,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not errors:
                 for key in [CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS, CONF_SAB_URL, CONF_SAB_KEY]:
                     self._data[key] = user_input.get(key, "")
-                return await self.async_step_media()
+                return await self._next_step()
 
         schema = vol.Schema({
             vol.Optional(CONF_QBIT_URL):  str,
@@ -322,10 +365,10 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="downloads",
             data_schema=schema,
             errors=errors,
-            last_step=False,
+            last_step=len(self._step_queue) == 0,
         )
 
-    # ── Krok 2: Radarr + Sonarr (povinné) ────────────────────────────────────
+    # ── Media: Radarr + Sonarr ────────────────────────────────────────────────
 
     async def async_step_media(self, user_input=None):
         errors = {}
@@ -344,7 +387,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not errors:
                 self._data.update(user_input)
-                return await self.async_step_quality()
+                return await self._next_step()
 
         schema = vol.Schema({
             vol.Required(CONF_RADARR_URL): str,
@@ -361,10 +404,10 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="media",
             data_schema=schema,
             errors=errors,
-            last_step=False,
+            last_step=len(self._step_queue) == 0,
         )
 
-    # ── Krok 3: Radarr 4K + Sonarr 4K (volitelné) ────────────────────────────
+    # ── Quality: Radarr 2 + Sonarr 2 + Bazarr ────────────────────────────────
 
     async def async_step_quality(self, user_input=None):
         errors = {}
@@ -393,7 +436,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._data[CONF_RADARR2_KEY] = radarr4k_key
                 self._data[CONF_SONARR2_URL] = sonarr4k_url
                 self._data[CONF_SONARR2_KEY] = sonarr4k_key
-                return await self.async_step_discovery()
+                return await self._next_step()
 
         schema = vol.Schema({
             vol.Optional(CONF_RADARR2_URL): str,
@@ -407,10 +450,10 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="quality",
             data_schema=schema,
             errors=errors,
-            last_step=False,
+            last_step=len(self._step_queue) == 0,
         )
 
-    # ── Krok 4: Overseerr (volitelný) + family účet + Bazarr (volitelné) ────
+    # ── Discovery: Overseerr + family + Bazarr ────────────────────────────────
 
     async def async_step_discovery(self, user_input=None):
         errors = {}
@@ -437,42 +480,65 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         errors[CONF_SEERR_FAMILY_EMAIL] = err
 
             if not errors:
-                err = await _test_bazarr(
-                    session,
-                    user_input.get(CONF_BAZARR_URL, ""),
-                    user_input.get(CONF_BAZARR_KEY, ""),
-                    ssl=ssl,
-                )
-                if err:
-                    errors[CONF_BAZARR_URL] = err
-
-            if not errors:
-                self._data.update(user_input)
-                for key in [CONF_SEERR_URL, CONF_SEERR_KEY, CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS, CONF_BAZARR_URL, CONF_BAZARR_KEY]:
+                for key in [CONF_SEERR_URL, CONF_SEERR_KEY, CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS]:
                     self._data[key] = user_input.get(key, "")
-                return await self.async_step_plex()
+                return await self._next_step()
 
         schema = vol.Schema({
             vol.Optional(CONF_SEERR_URL):          str,
             vol.Optional(CONF_SEERR_KEY):          str,
             vol.Optional(CONF_SEERR_FAMILY_EMAIL): str,
             vol.Optional(CONF_SEERR_FAMILY_PASS):  str,
-            vol.Optional(CONF_BAZARR_URL):         str,
-            vol.Optional(CONF_BAZARR_KEY):         str,
         })
         suggested = self._data if self._data else {
-            CONF_SEERR_URL:   "http://192.168.1.x:5055",
-            CONF_BAZARR_URL:  "http://192.168.1.x:6767",
+            CONF_SEERR_URL: "http://192.168.1.x:5055",
         }
         schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(
             step_id="discovery",
             data_schema=schema,
             errors=errors,
-            last_step=False,
+            last_step=len(self._step_queue) == 0,
         )
 
-    # ── Krok 5: Plex (volitelné) ─────────────────────────────────────────────
+    # ── Bazarr ───────────────────────────────────────────────────────────────
+
+    async def async_step_bazarr(self, user_input=None):
+        errors = {}
+        ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
+
+        if user_input is not None:
+            session = async_get_clientsession(self.hass)
+            err = await _test_bazarr(
+                session,
+                user_input.get(CONF_BAZARR_URL, ""),
+                user_input.get(CONF_BAZARR_KEY, ""),
+                ssl=ssl,
+            )
+            if err:
+                errors[CONF_BAZARR_URL] = err
+
+            if not errors:
+                self._data[CONF_BAZARR_URL] = user_input.get(CONF_BAZARR_URL, "")
+                self._data[CONF_BAZARR_KEY] = user_input.get(CONF_BAZARR_KEY, "")
+                return await self._next_step()
+
+        schema = vol.Schema({
+            vol.Optional(CONF_BAZARR_URL): str,
+            vol.Optional(CONF_BAZARR_KEY): str,
+        })
+        suggested = self._data if self._data else {
+            CONF_BAZARR_URL: "http://192.168.1.x:6767",
+        }
+        schema = self.add_suggested_values_to_schema(schema, suggested)
+        return self.async_show_form(
+            step_id="bazarr",
+            data_schema=schema,
+            errors=errors,
+            last_step=len(self._step_queue) == 0,
+        )
+
+    # ── Plex ─────────────────────────────────────────────────────────────────
 
     async def async_step_plex(self, user_input=None):
         errors = {}
@@ -481,7 +547,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if user_input.get("skip_plex"):
                 self._data[CONF_PLEX_TOKEN] = ""
                 self._data[CONF_PLEX_URL]   = ""
-                return await self.async_step_jellyfin()
+                return await self._next_step()
 
             manual_url = (user_input.get("plex_server_url") or "").strip().rstrip("/")
             if manual_url and _url_error(manual_url):
@@ -493,13 +559,12 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._data[CONF_PLEX_TOKEN] = token
                     self._data[CONF_PLEX_URL] = manual_url or server_url or ""
                 elif self._data.get(CONF_PLEX_TOKEN):
-                    # Store manual URL as-is (empty = auto-detect at proxy time)
                     self._data[CONF_PLEX_URL] = manual_url
                 else:
                     errors["base"] = "plex_not_authenticated"
                     self._plex_pin_id = None
                 if not errors:
-                    return await self.async_step_jellyfin()
+                    return await self._next_step()
 
         try:
             pin_id, pin_code = await self._create_plex_pin()
@@ -532,10 +597,10 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=schema,
             errors=errors,
             description_placeholders={"plex_section": plex_section},
-            last_step=False,
+            last_step=len(self._step_queue) == 0,
         )
 
-    # ── Krok 6: Tautulli + Jellystat (volitelné) ────────────────────────────
+    # ── Tautulli + Jellystat ─────────────────────────────────────────────────
 
     async def async_step_jellyfin(self, user_input=None):
         errors = {}
@@ -562,7 +627,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._data[CONF_TAUTULLI_KEY]  = tautulli_key
                 self._data[CONF_JELLYSTAT_URL] = jellystat_url
                 self._data[CONF_JELLYSTAT_KEY] = jellystat_key
-                return self._finish_flow()
+                return await self._next_step()
 
         schema = vol.Schema({
             vol.Optional(CONF_TAUTULLI_URL):  str,
@@ -582,8 +647,124 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="jellyfin",
             data_schema=schema,
             errors=errors,
-            last_step=True,
+            last_step=len(self._step_queue) == 0,
         )
+
+    # ── Trakt OAuth ───────────────────────────────────────────────────────────
+
+    async def async_step_trakt(self, user_input=None):
+        errors = {}
+
+        if user_input is not None:
+            client_id     = (user_input.get(CONF_TRAKT_CLIENT_ID) or "").strip()
+            client_secret = (user_input.get(CONF_TRAKT_CLIENT_SECRET) or "").strip()
+
+            if not client_id:
+                return self._finish_flow()
+
+            if not client_secret:
+                errors[CONF_TRAKT_CLIENT_SECRET] = "trakt_secret_required"
+            else:
+                session = async_get_clientsession(self.hass)
+                try:
+                    async with session.post(
+                        f"{TRAKT_API_BASE}/oauth/device/code",
+                        json={"client_id": client_id},
+                        headers={
+                            "Content-Type": "application/json",
+                            "trakt-api-version": "2",
+                            "trakt-api-key": client_id,
+                        },
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        if resp.status != 200:
+                            errors[CONF_TRAKT_CLIENT_ID] = "trakt_device_code_failed"
+                        else:
+                            dc = await resp.json()
+                            self._trakt_device_code = dc
+                            self._trakt_client_id     = client_id
+                            self._trakt_client_secret = client_secret
+                            return await self.async_step_trakt_poll()
+                except Exception:
+                    errors[CONF_TRAKT_CLIENT_ID] = "trakt_connection_error"
+
+        schema = vol.Schema({
+            vol.Optional(CONF_TRAKT_CLIENT_ID):     str,
+            vol.Optional(CONF_TRAKT_CLIENT_SECRET): str,
+        })
+        ui = user_input or {}
+        schema = self.add_suggested_values_to_schema(schema, {
+            CONF_TRAKT_CLIENT_ID:     ui.get(CONF_TRAKT_CLIENT_ID) or self._data.get(CONF_TRAKT_CLIENT_ID, ""),
+            CONF_TRAKT_CLIENT_SECRET: ui.get(CONF_TRAKT_CLIENT_SECRET) or self._data.get(CONF_TRAKT_CLIENT_SECRET, ""),
+        })
+        return self.async_show_form(
+            step_id="trakt",
+            data_schema=schema,
+            errors=errors,
+            last_step=False,
+            description_placeholders={
+                "trakt_apps_url": "https://trakt.tv/oauth/applications/new",
+            },
+        )
+
+    async def async_step_trakt_poll(self, user_input=None):
+        import time
+        errors = {}
+        dc = getattr(self, "_trakt_device_code", None)
+        if not dc:
+            return await self.async_step_trakt()
+
+        client_id     = self._trakt_client_id
+        client_secret = self._trakt_client_secret
+
+        if user_input is not None:
+            session = async_get_clientsession(self.hass)
+            try:
+                async with session.post(
+                    f"{TRAKT_API_BASE}/oauth/device/token",
+                    json={
+                        "code":          dc["device_code"],
+                        "client_id":     client_id,
+                        "client_secret": client_secret,
+                    },
+                    headers={
+                        "Content-Type": "application/json",
+                        "trakt-api-version": "2",
+                        "trakt-api-key": client_id,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 200:
+                        tok = await resp.json()
+                        self._data[CONF_TRAKT_CLIENT_ID]     = client_id
+                        self._data[CONF_TRAKT_CLIENT_SECRET] = client_secret
+                        self._data[CONF_TRAKT_ACCESS_TOKEN]  = tok["access_token"]
+                        self._data[CONF_TRAKT_REFRESH_TOKEN] = tok["refresh_token"]
+                        self._data[CONF_TRAKT_EXPIRES_AT]    = int(time.time()) + tok.get("expires_in", 604800)
+                        return self._finish_flow()
+                    elif resp.status == 400:
+                        errors["base"] = "trakt_not_authorized"
+                    elif resp.status == 410:
+                        errors["base"] = "trakt_code_expired"
+                    else:
+                        errors["base"] = "trakt_poll_error"
+            except Exception:
+                errors["base"] = "trakt_connection_error"
+
+        user_code  = dc.get("user_code", "")
+        verify_url = dc.get("verification_url", "https://trakt.tv/activate")
+        return self.async_show_form(
+            step_id="trakt_poll",
+            data_schema=vol.Schema({}),
+            errors=errors,
+            last_step=True,
+            description_placeholders={
+                "user_code":  user_code,
+                "verify_url": verify_url,
+            },
+        )
+
+    # ── Finish ────────────────────────────────────────────────────────────────
 
     def _finish_flow(self):
         if self._reconfigure_entry is not None:
@@ -595,6 +776,8 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             return self.async_abort(reason="reconfigure_successful")
         return self.async_create_entry(title="Arr Stack", data=self._data)
+
+    # ── Plex helpers ──────────────────────────────────────────────────────────
 
     async def _create_plex_pin(self) -> tuple[int, str]:
         session = async_get_clientsession(self.hass)
@@ -664,7 +847,6 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 for res in resources:
                     if res.get("product") == "Plex Media Server":
                         conns = res.get("connections", [])
-                        # Local-first, then others — but test reachability from this HA instance
                         local  = [c for c in conns if c.get("local") and not c.get("relay")]
                         remote = [c for c in conns if not c.get("local") and not c.get("relay")]
                         candidates = local + remote
@@ -683,7 +865,6 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                         return uri
                             except Exception:
                                 continue
-                        # All probes failed — return first candidate as-is (better than nothing)
                         if candidates:
                             return candidates[0].get("uri", "").rstrip("/")
         except Exception:

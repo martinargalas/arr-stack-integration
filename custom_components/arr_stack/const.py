@@ -36,6 +36,15 @@ CONF_TAUTULLI_KEY = "tautulli_api_key"
 CONF_JELLYSTAT_URL = "jellystat_url"
 CONF_JELLYSTAT_KEY = "jellystat_api_key"
 
+CONF_TRAKT_CLIENT_ID     = "trakt_client_id"
+CONF_TRAKT_CLIENT_SECRET = "trakt_client_secret"
+CONF_TRAKT_ACCESS_TOKEN  = "trakt_access_token"
+CONF_TRAKT_REFRESH_TOKEN = "trakt_refresh_token"
+CONF_TRAKT_EXPIRES_AT    = "trakt_expires_at"
+
+TRAKT_API_BASE   = "https://api.trakt.tv"
+TRAKT_API_VER    = "2"
+
 PLEX_CLIENT_ID  = "arr-stack-card"
 
 CONF_SKIP_SSL_VERIFY = "skip_ssl_verify"

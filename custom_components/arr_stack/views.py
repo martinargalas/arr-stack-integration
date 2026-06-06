@@ -1,5 +1,6 @@
 """HTTP proxy view — přeposílá requesty z karty na lokální služby (server-side, žádný CORS)."""
 import asyncio
+import itertools
 import logging
 from urllib.parse import quote
 import aiohttp
@@ -25,6 +26,9 @@ from .const import (
     CONF_PLEX_TOKEN, CONF_PLEX_URL, PLEX_CLIENT_ID,
     CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
     CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY,
+    CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET,
+    CONF_TRAKT_ACCESS_TOKEN, CONF_TRAKT_REFRESH_TOKEN, CONF_TRAKT_EXPIRES_AT,
+    TRAKT_API_BASE, TRAKT_API_VER,
     CONF_SKIP_SSL_VERIFY,
 )
 
@@ -95,6 +99,9 @@ class ArrStackProxyView(HomeAssistantView):
         self._seerr_family_session: aiohttp.ClientSession | None = None
         # Cache pro auto-detekovanou Plex URL (když user nezadal manuální)
         self._plex_url_cache: str | None = None
+        # Cache pro Trakt recommendations (TTL 30 min)
+        self._trakt_cache: list | None = None
+        self._trakt_cache_ts: float = 0.0
 
     @property
     def _cfg(self) -> dict:
@@ -173,6 +180,23 @@ class ArrStackProxyView(HomeAssistantView):
         cfg = self._cfg
         http = async_get_clientsession(self._hass)
         ssl = False if cfg.get(CONF_SKIP_SSL_VERIFY) else None
+
+        # ════════════════════════════════════════════
+        # Capabilities — which services are configured
+        # ════════════════════════════════════════════
+        if service == "capabilities":
+            return web.json_response({
+                "qbit":       bool(cfg.get(CONF_QBIT_URL)),
+                "sabnzbd":    bool(cfg.get(CONF_SAB_URL)),
+                "radarr2":    bool(cfg.get(CONF_RADARR2_URL)),
+                "sonarr2":    bool(cfg.get(CONF_SONARR2_URL)),
+                "bazarr":     bool(cfg.get(CONF_BAZARR_URL)),
+                "overseerr":  bool(cfg.get(CONF_SEERR_URL)),
+                "plex":       bool(cfg.get(CONF_PLEX_TOKEN)),
+                "tautulli":   bool(cfg.get(CONF_TAUTULLI_URL)),
+                "jellystat":  bool(cfg.get(CONF_JELLYSTAT_URL)),
+                "trakt":      bool(cfg.get(CONF_TRAKT_CLIENT_ID)),
+            })
 
         # ════════════════════════════════════════════
         # qBittorrent
@@ -1707,6 +1731,166 @@ class ArrStackProxyView(HomeAssistantView):
                         continue
                 return web.json_response({"ip": None})
 
+        elif service == "trakt":
+            return await self._handle_trakt(request, path, method, cfg, http, ssl)
+
         return web.json_response({"error": "unknown service or path"}, status=404)
+
+    # ── Trakt proxy ───────────────────────────────────────────────────────────
+
+    async def _trakt_access_token(self, cfg: dict, session: aiohttp.ClientSession) -> str | None:
+        """Return a valid Trakt access token, refreshing if needed. Persists updated tokens to config entry."""
+        import time
+        access_token  = cfg.get(CONF_TRAKT_ACCESS_TOKEN, "")
+        refresh_token = cfg.get(CONF_TRAKT_REFRESH_TOKEN, "")
+        client_id     = cfg.get(CONF_TRAKT_CLIENT_ID, "")
+        client_secret = cfg.get(CONF_TRAKT_CLIENT_SECRET, "")
+        expires_at    = cfg.get(CONF_TRAKT_EXPIRES_AT, 0)
+
+        if not access_token or not client_id:
+            return None
+
+        # Refresh if expiring within 1 day
+        if time.time() < expires_at - 86400:
+            return access_token
+
+        if not refresh_token or not client_secret:
+            return access_token  # can't refresh, use as-is and hope for the best
+
+        try:
+            async with session.post(
+                f"{TRAKT_API_BASE}/oauth/token",
+                json={
+                    "refresh_token": refresh_token,
+                    "client_id":     client_id,
+                    "client_secret": client_secret,
+                    "redirect_uri":  "urn:ietf:wg:oauth:2.0:oob",
+                    "grant_type":    "refresh_token",
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    tok = await resp.json()
+                    new_access  = tok["access_token"]
+                    new_refresh = tok["refresh_token"]
+                    new_expires = int(time.time()) + tok.get("expires_in", 604800)
+                    # Persist to config entry
+                    for entry in self._hass.config_entries.async_entries(DOMAIN):
+                        new_data = dict(entry.data)
+                        new_data[CONF_TRAKT_ACCESS_TOKEN]  = new_access
+                        new_data[CONF_TRAKT_REFRESH_TOKEN] = new_refresh
+                        new_data[CONF_TRAKT_EXPIRES_AT]    = new_expires
+                        self._hass.config_entries.async_update_entry(entry, data=new_data)
+                        cfg.update({
+                            CONF_TRAKT_ACCESS_TOKEN:  new_access,
+                            CONF_TRAKT_REFRESH_TOKEN: new_refresh,
+                            CONF_TRAKT_EXPIRES_AT:    new_expires,
+                        })
+                        break
+                    return new_access
+        except Exception as e:
+            _LOGGER.warning("arr_stack Trakt token refresh failed: %s", e)
+        return access_token
+
+    async def _handle_trakt(self, request, path: str, method: str, cfg: dict, session: aiohttp.ClientSession, ssl) -> web.Response:
+        token = await self._trakt_access_token(cfg, session)
+        if not token:
+            return web.json_response({"error": "Trakt not configured"}, status=503)
+
+        client_id = cfg.get(CONF_TRAKT_CLIENT_ID, "")
+        headers = {
+            "Content-Type":      "application/json",
+            "Authorization":     f"Bearer {token}",
+            "trakt-api-version": TRAKT_API_VER,
+            "trakt-api-key":     client_id,
+        }
+
+        # GET /trakt/recommendations  →  mixed movies + shows
+        if path == "recommendations" and method == "GET":
+            import time as _time
+            _TRAKT_CACHE_TTL = 1800  # 30 minut
+            if self._trakt_cache is not None and (_time.monotonic() - self._trakt_cache_ts) < _TRAKT_CACHE_TTL:
+                return web.json_response(self._trakt_cache)
+            limit = int(request.query.get("limit", 40))
+            try:
+                movie_url = f"{TRAKT_API_BASE}/recommendations/movies?limit={limit}&extended=full"
+                show_url  = f"{TRAKT_API_BASE}/recommendations/shows?limit={limit}&extended=full"
+                async with session.get(movie_url, headers=headers, ssl=ssl, timeout=aiohttp.ClientTimeout(total=15)) as rm, \
+                           session.get(show_url,  headers=headers, ssl=ssl, timeout=aiohttp.ClientTimeout(total=15)) as rs:
+                    movies = await rm.json() if rm.status == 200 else []
+                    shows  = await rs.json() if rs.status == 200 else []
+                # Normalise to unified format
+                movie_items = []
+                for m in (movies if isinstance(movies, list) else []):
+                    movie = m.get("movie", m)
+                    ids   = movie.get("ids", {})
+                    movie_items.append({
+                        "mediaType":  "movie",
+                        "id":         ids.get("tmdb"),
+                        "title":      movie.get("title", ""),
+                        "releaseDate": str(movie.get("year", "")),
+                        "voteAverage": movie.get("rating"),
+                        "posterPath":  None,
+                        "overview":    movie.get("overview", ""),
+                        "_traktSlug":  ids.get("slug"),
+                    })
+                show_items = []
+                for s in (shows if isinstance(shows, list) else []):
+                    show = s.get("show", s)
+                    ids  = show.get("ids", {})
+                    show_items.append({
+                        "mediaType":  "tv",
+                        "id":         ids.get("tmdb"),
+                        "tvdbId":     ids.get("tvdb"),
+                        "title":      show.get("title", ""),
+                        "releaseDate": str(show.get("year", "")),
+                        "voteAverage": show.get("rating"),
+                        "posterPath":  None,
+                        "overview":    show.get("overview", ""),
+                        "_traktSlug":  ids.get("slug"),
+                    })
+                # Interleave movies and shows so they alternate in the result
+                result = []
+                for pair in itertools.zip_longest(movie_items, show_items):
+                    result.extend(x for x in pair if x is not None)
+                # Filter items without tmdb id
+                result = [r for r in result if r.get("id")]
+                # Enrich with TMDB poster paths
+                result = await self._enrich_trakt_posters(result, session, ssl)
+                self._trakt_cache = result
+                self._trakt_cache_ts = _time.monotonic()
+                return web.json_response(result)
+            except Exception as e:
+                _LOGGER.error("arr_stack Trakt recommendations error: %s", e)
+                return web.json_response({"error": str(e)}, status=502)
+
+        return web.json_response({"error": "unknown trakt path"}, status=404)
+
+    async def _enrich_trakt_posters(self, items: list, session: aiohttp.ClientSession, ssl) -> list:
+        """Batch-fetch poster_path from TMDB for Trakt items."""
+        from .const import TMDB_API_KEY, TMDB_BASE as _TMDB_BASE
+        timeout = aiohttp.ClientTimeout(total=10)
+
+        async def fetch_poster(item):
+            tmdb_id = item.get("id")
+            if not tmdb_id:
+                return item
+            media_type = "movie" if item.get("mediaType") == "movie" else "tv"
+            url = f"{_TMDB_BASE}/{media_type}/{tmdb_id}"
+            try:
+                async with session.get(url, params={"api_key": TMDB_API_KEY}, ssl=ssl, timeout=timeout) as r:
+                    if r.status == 200:
+                        data = await r.json()
+                        item = dict(item)
+                        item["posterPath"] = data.get("poster_path")
+                        item["voteAverage"] = item.get("voteAverage") or data.get("vote_average")
+                        item["overview"] = item.get("overview") or data.get("overview", "")
+            except Exception:
+                pass
+            return item
+
+        import asyncio
+        return list(await asyncio.gather(*[fetch_poster(i) for i in items]))
 
 
