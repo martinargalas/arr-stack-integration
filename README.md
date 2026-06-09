@@ -35,6 +35,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Plex | Stream monitoring & playback control | Optional |
 | Tautulli | Watch history, statistics & account sharing detection | Optional |
 | Jellystat | Watch history and statistics | Optional |
+| Prowlarr | Indexer management and search statistics | Optional |
 | Trakt | Personalised movie & show recommendations | Optional |
 
 ---
@@ -83,6 +84,7 @@ Choose which optional services you want to configure. Only the selected steps wi
 | Discovery | Overseerr / Jellyseerr |
 | Plex | Plex |
 | Streaming stats | Tautulli, Jellystat |
+| Prowlarr | Prowlarr |
 | Trakt | Trakt |
 
 ---
@@ -169,6 +171,15 @@ Authenticate via the Plex login link shown during setup. This enables stream mon
 | Jellystat API key | Find in Jellystat → Settings |
 
 > Tautulli also powers **account sharing detection** — alerts when the same user streams from multiple IPs simultaneously.
+
+---
+
+### Prowlarr *(optional)*
+
+| Field | Example |
+|-------|---------|
+| Prowlarr URL | `http://192.168.1.10:9696` |
+| Prowlarr API key | Find in Prowlarr → Settings → General |
 
 ---
 

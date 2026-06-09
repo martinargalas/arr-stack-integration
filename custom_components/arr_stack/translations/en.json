@@ -21,7 +21,8 @@
           "enable_discovery": "Discovery / Overseerr / Jellyseerr",
           "enable_plex":      "Plex (playback control)",
           "enable_jellyfin":  "Streaming stats / Tautulli / Jellystat",
-          "enable_trakt":     "Trakt (personalised recommendations)"
+          "enable_trakt":     "Trakt (personalised recommendations)",
+          "enable_prowlarr":  "Prowlarr (indexer management)"
         }
       },
       "downloads": {
@@ -145,6 +146,18 @@
       "trakt_poll": {
         "title": "Arr Stack — Trakt authorisation",
         "description": "Open **{verify_url}** and enter code:\n\n# `{user_code}`\n\nOnce you have authorised the app on Trakt, click **Submit** to complete setup."
+      },
+      "prowlarr": {
+        "title": "Arr Stack — Prowlarr",
+        "description": "**Prowlarr** — Optional, enables indexer management and search statistics.\n\nLeave URL empty to skip.",
+        "data": {
+          "prowlarr_url":     "Prowlarr URL (optional)",
+          "prowlarr_api_key": "Prowlarr API key (optional)"
+        },
+        "data_description": {
+          "prowlarr_url":     "e.g. http://192.168.1.10:9696 — default port is 9696",
+          "prowlarr_api_key": "Find it in Prowlarr → Settings → General → API Key"
+        }
       }
     },
     "abort": {

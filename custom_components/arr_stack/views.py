@@ -29,6 +29,7 @@ from .const import (
     CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET,
     CONF_TRAKT_ACCESS_TOKEN, CONF_TRAKT_REFRESH_TOKEN, CONF_TRAKT_EXPIRES_AT,
     TRAKT_API_BASE, TRAKT_API_VER,
+    CONF_PROWLARR_URL, CONF_PROWLARR_KEY,
     CONF_SKIP_SSL_VERIFY,
 )
 
@@ -196,6 +197,7 @@ class ArrStackProxyView(HomeAssistantView):
                 "tautulli":   bool(cfg.get(CONF_TAUTULLI_URL)),
                 "jellystat":  bool(cfg.get(CONF_JELLYSTAT_URL)),
                 "trakt":      bool(cfg.get(CONF_TRAKT_CLIENT_ID)),
+                "prowlarr":   bool(cfg.get(CONF_PROWLARR_URL)),
             })
 
         # ════════════════════════════════════════════
@@ -1733,6 +1735,179 @@ class ArrStackProxyView(HomeAssistantView):
 
         elif service == "trakt":
             return await self._handle_trakt(request, path, method, cfg, http, ssl)
+
+        # ════════════════════════════════════════════
+        # Prowlarr
+        # ════════════════════════════════════════════
+        elif service == "prowlarr":
+            if not cfg.get(CONF_PROWLARR_URL):
+                return web.json_response({"_notConfigured": True})
+            base = cfg.get(CONF_PROWLARR_URL, "").rstrip("/")
+            hdrs = {"X-Api-Key": cfg.get(CONF_PROWLARR_KEY, "")}
+
+            # Indexer list (includes embedded status)
+            if path == "indexers" and method == "GET":
+                async with http.get(f"{base}/api/v1/indexer", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # App profiles
+            if path == "appprofiles" and method == "GET":
+                async with http.get(f"{base}/api/v1/appprofile", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Indexer status (errors)
+            if path == "indexerstatus" and method == "GET":
+                async with http.get(f"{base}/api/v1/indexerstatus", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Indexer stats (for charts)
+            if path == "indexerstats" and method == "GET":
+                params = {}
+                if request.query.get("startDate"): params["startDate"] = request.query["startDate"]
+                if request.query.get("endDate"):   params["endDate"]   = request.query["endDate"]
+                async with http.get(f"{base}/api/v1/indexerstats", headers=hdrs, params=params, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # History
+            if path == "history" and method == "GET":
+                page      = request.query.get("page", "1")
+                page_size = request.query.get("pageSize", "100")
+                params = {"page": page, "pageSize": page_size, "sortKey": "date", "sortDirection": "descending"}
+                if request.query.get("indexerId"): params["indexerId"] = request.query["indexerId"]
+                if request.query.get("eventType"): params["eventType"] = request.query["eventType"]
+                async with http.get(f"{base}/api/v1/history", headers=hdrs, params=params, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # History delete
+            if path.startswith("history/") and method == "DELETE":
+                h_id = path.split("/", 1)[1]
+                async with http.delete(f"{base}/api/v1/history/{h_id}", headers=hdrs, ssl=ssl) as r:
+                    body = await r.read()
+                    return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
+
+            # Indexer schema (all available indexer definitions for Add)
+            if path == "indexer/schema" and method == "GET":
+                async with http.get(f"{base}/api/v1/indexer/schema", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Single indexer (for Edit — returns config + field values)
+            if path.startswith("indexer/") and not path.startswith("indexer/schema") and method == "GET":
+                idx_id = path.split("/", 1)[1]
+                async with http.get(f"{base}/api/v1/indexer/{idx_id}", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Create indexer
+            if path == "indexer" and method == "POST":
+                body = await request.json()
+                async with http.post(f"{base}/api/v1/indexer", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Update indexer
+            if path.startswith("indexer/") and method == "PUT":
+                idx_id = path.split("/", 1)[1]
+                body = await request.json()
+                body.pop("_status", None)  # strip client-side field
+                async with http.put(f"{base}/api/v1/indexer/{idx_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Delete indexer
+            if path.startswith("indexer/") and method == "DELETE":
+                idx_id = path.split("/", 1)[1]
+                async with http.delete(f"{base}/api/v1/indexer/{idx_id}", headers=hdrs, ssl=ssl) as r:
+                    body = await r.read()
+                    return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
+
+            # Test indexer — id=0 or absent → new config test; id>0 → test existing by ID
+            # Note: Prowlarr has no POST /api/v1/indexer/{id}/test → fetch config first, then test
+            # Always returns 200 so JS can read error messages (HA callApi drops body on non-200)
+            if path == "idxtest" and method == "POST":
+                import json as _json
+                idx_id = request.query.get("id", "0")
+                if idx_id and idx_id != "0":
+                    async with http.get(f"{base}/api/v1/indexer/{idx_id}", headers=hdrs, ssl=ssl) as r_get:
+                        idx_config = await r_get.json()
+                    idx_config.pop("_status", None)
+                    async with http.post(f"{base}/api/v1/indexer/test", headers={**hdrs, "Content-Type": "application/json"}, json=idx_config, ssl=ssl) as r:
+                        resp_body = await r.read()
+                else:
+                    body = await request.json()
+                    body.pop("_status", None)
+                    body["id"] = 0
+                    async with http.post(f"{base}/api/v1/indexer/test", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                        resp_body = await r.read()
+                # Always 200 — include ok flag + errors for JS to display
+                if r.status in (200, 204) and not resp_body.strip():
+                    return web.json_response({"ok": True})
+                try:
+                    errs = _json.loads(resp_body)
+                    if isinstance(errs, list):
+                        return web.json_response({"ok": False, "errors": errs})
+                    return web.json_response({"ok": True})
+                except Exception:
+                    return web.json_response({"ok": False, "errors": [{"errorMessage": resp_body.decode(errors="replace")}]})
+
+            # Test all indexers
+            if path == "idxtestall" and method == "POST":
+                json_hdrs = {**hdrs, "Content-Type": "application/json"}
+                async with http.post(f"{base}/api/v1/indexer/testall", headers=json_hdrs, data=b"{}", ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Applications list
+            if path == "applications" and method == "GET":
+                async with http.get(f"{base}/api/v1/applications", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Applications schema (all implementation types)
+            if path == "applications/schema" and method == "GET":
+                async with http.get(f"{base}/api/v1/applications/schema", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Create application
+            if path == "applications" and method == "POST":
+                body = await request.json()
+                async with http.post(f"{base}/api/v1/applications", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Update application
+            if path.startswith("applications/") and method == "PUT":
+                app_id = path.split("/", 1)[1]
+                body = await request.json()
+                async with http.put(f"{base}/api/v1/applications/{app_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Delete application
+            if path.startswith("applications/") and method == "DELETE":
+                app_id = path.split("/", 1)[1]
+                async with http.delete(f"{base}/api/v1/applications/{app_id}", headers=hdrs, ssl=ssl) as r:
+                    body = await r.read()
+                    return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
+
+            # Test application — always returns 200 + {ok, errors}
+            if path == "apptest" and method == "POST":
+                import json as _json2
+                body = await request.json()
+                async with http.post(f"{base}/api/v1/applications/test", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    resp_body = await r.read()
+                if r.status in (200, 204) and not resp_body.strip():
+                    return web.json_response({"ok": True})
+                try:
+                    errs = _json2.loads(resp_body)
+                    if isinstance(errs, list):
+                        return web.json_response({"ok": False, "errors": errs})
+                    return web.json_response({"ok": True})
+                except Exception:
+                    return web.json_response({"ok": False, "errors": [{"errorMessage": resp_body.decode(errors="replace")}]})
+
+            # Sync application — force push indexers to specific app
+            if path.startswith("appsync/") and method == "POST":
+                app_id = int(path.split("/", 1)[1])
+                async with http.post(f"{base}/api/v1/command", headers={**hdrs, "Content-Type": "application/json"}, json={"name": "ApplicationIndexerSync", "applicationIds": [app_id]}, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            # Indexer categories (for syncCategories tree in app form)
+            if path == "categories" and method == "GET":
+                async with http.get(f"{base}/api/v1/indexer/categories", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
         return web.json_response({"error": "unknown service or path"}, status=404)
 

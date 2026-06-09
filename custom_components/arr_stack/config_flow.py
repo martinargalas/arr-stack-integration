@@ -23,6 +23,7 @@ from .const import (
     CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET,
     CONF_TRAKT_ACCESS_TOKEN, CONF_TRAKT_REFRESH_TOKEN, CONF_TRAKT_EXPIRES_AT,
     TRAKT_API_BASE,
+    CONF_PROWLARR_URL, CONF_PROWLARR_KEY,
     CONF_SKIP_SSL_VERIFY,
 )
 
@@ -237,7 +238,7 @@ async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str, ssl=N
 # ── Config Flow ──────────────────────────────────────────────────────────────
 
 # All configurable step groups in order
-_ALL_STEPS = ['media', 'downloads', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt']
+_ALL_STEPS = ['media', 'downloads', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr']
 
 
 class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -291,7 +292,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_service_selection(self, user_input=None):
         if user_input is not None:
             # media is always included — mandatory
-            optional_steps = ['downloads', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt']
+            optional_steps = ['downloads', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr']
             selected = ['media'] + [s for s in optional_steps if user_input.get(f'enable_{s}', False)]
             # preserve order from _ALL_STEPS
             self._step_queue = [s for s in _ALL_STEPS if s in selected]
@@ -307,6 +308,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional('enable_plex',      default=bool(d.get(CONF_PLEX_TOKEN))): bool,
             vol.Optional('enable_jellyfin',  default=bool(d.get(CONF_TAUTULLI_URL) or d.get(CONF_JELLYSTAT_URL))): bool,
             vol.Optional('enable_trakt',     default=bool(d.get(CONF_TRAKT_CLIENT_ID))): bool,
+            vol.Optional('enable_prowlarr',  default=bool(d.get(CONF_PROWLARR_URL))): bool,
         })
         return self.async_show_form(
             step_id="service_selection",
@@ -660,7 +662,12 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             client_secret = (user_input.get(CONF_TRAKT_CLIENT_SECRET) or "").strip()
 
             if not client_id:
-                return self._finish_flow()
+                return await self._next_step()
+
+            # Credentials unchanged and token already present → skip re-auth
+            if (client_id == self._data.get(CONF_TRAKT_CLIENT_ID, '').strip()
+                    and self._data.get(CONF_TRAKT_ACCESS_TOKEN)):
+                return await self._next_step()
 
             if not client_secret:
                 errors[CONF_TRAKT_CLIENT_SECRET] = "trakt_secret_required"
@@ -701,7 +708,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="trakt",
             data_schema=schema,
             errors=errors,
-            last_step=False,
+            last_step=len(self._step_queue) == 0,
             description_placeholders={
                 "trakt_apps_url": "https://trakt.tv/oauth/applications/new",
             },
@@ -762,6 +769,49 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "user_code":  user_code,
                 "verify_url": verify_url,
             },
+        )
+
+    # ── Prowlarr ──────────────────────────────────────────────────────────────
+
+    async def async_step_prowlarr(self, user_input=None):
+        errors = {}
+        if user_input is not None:
+            url = (user_input.get(CONF_PROWLARR_URL) or "").strip().rstrip("/")
+            key = (user_input.get(CONF_PROWLARR_KEY) or "").strip()
+            if url:
+                err = _url_error(url)
+                if err:
+                    errors[CONF_PROWLARR_URL] = err
+                else:
+                    try:
+                        session = async_get_clientsession(self.hass)
+                        ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
+                        async with session.get(
+                            f"{url}/api/v1/indexer",
+                            headers={"X-Api-Key": key},
+                            timeout=aiohttp.ClientTimeout(total=10),
+                            ssl=ssl,
+                        ) as r:
+                            if r.status not in (200, 201):
+                                errors[CONF_PROWLARR_URL] = "cannot_connect"
+                    except Exception as e:
+                        errors[CONF_PROWLARR_URL] = _map_exc(e)
+            if not errors:
+                self._data[CONF_PROWLARR_URL] = url or ""
+                self._data[CONF_PROWLARR_KEY] = key
+                return await self._next_step()
+
+        d = self._data
+        ui = user_input or {}
+        schema = vol.Schema({
+            vol.Optional(CONF_PROWLARR_URL, default=ui.get(CONF_PROWLARR_URL) or d.get(CONF_PROWLARR_URL, "")): str,
+            vol.Optional(CONF_PROWLARR_KEY, default=ui.get(CONF_PROWLARR_KEY) or d.get(CONF_PROWLARR_KEY, "")): str,
+        })
+        return self.async_show_form(
+            step_id="prowlarr",
+            data_schema=schema,
+            errors=errors,
+            last_step=len(self._step_queue) == 0,
         )
 
     # ── Finish ────────────────────────────────────────────────────────────────

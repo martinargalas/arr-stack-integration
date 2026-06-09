@@ -47,6 +47,9 @@ TRAKT_API_VER    = "2"
 
 PLEX_CLIENT_ID  = "arr-stack-card"
 
+CONF_PROWLARR_URL = "prowlarr_url"
+CONF_PROWLARR_KEY = "prowlarr_api_key"
+
 CONF_SKIP_SSL_VERIFY = "skip_ssl_verify"
 
 TMDB_API_KEY = "a6c41993f7f9c078b78fbb449af8f9fd"
