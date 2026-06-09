@@ -2040,6 +2040,52 @@ class ArrStackProxyView(HomeAssistantView):
                 _LOGGER.error("arr_stack Trakt recommendations error: %s", e)
                 return web.json_response({"error": str(e)}, status=502)
 
+        # DELETE /trakt/recommendations/{movies|shows}/{id}  →  hide from recommendations
+        if path.startswith("recommendations/") and method == "DELETE":
+            try:
+                rest = path[len("recommendations/"):]  # e.g. "movies/the-dark-knight-2008"
+                self._trakt_cache = None
+                async with session.delete(
+                    f"{TRAKT_API_BASE}/recommendations/{rest}",
+                    headers=headers,
+                    ssl=ssl,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as r:
+                    if r.status in (200, 201, 204):
+                        return web.json_response({"ok": True})
+                    return web.json_response({"error": await r.text()}, status=r.status)
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=502)
+
+        # POST /trakt/history  →  mark movie or show as watched
+        if path == "history" and method == "POST":
+            try:
+                body      = await request.json()
+                media_type = body.get("mediaType", "movie")
+                slug      = body.get("slug")
+                tmdb_id   = body.get("tmdbId")
+                ids_obj   = {}
+                if slug:    ids_obj["slug"] = slug
+                if tmdb_id: ids_obj["tmdb"] = tmdb_id
+                if media_type == "tv":
+                    payload = {"shows": [{"ids": ids_obj}]}
+                else:
+                    payload = {"movies": [{"ids": ids_obj}]}
+                async with session.post(
+                    f"{TRAKT_API_BASE}/sync/history",
+                    headers=headers,
+                    json=payload,
+                    ssl=ssl,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as r:
+                    # Clear recommendations cache so this item won't reappear
+                    self._trakt_cache = None
+                    if r.status in (200, 201):
+                        return web.json_response({"ok": True})
+                    return web.json_response({"error": await r.text()}, status=r.status)
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=502)
+
         return web.json_response({"error": "unknown trakt path"}, status=404)
 
     async def _enrich_trakt_posters(self, items: list, session: aiohttp.ClientSession, ssl) -> list:
