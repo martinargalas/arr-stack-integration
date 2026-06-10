@@ -186,6 +186,8 @@ class ArrStackProxyView(HomeAssistantView):
         # Capabilities — which services are configured
         # ════════════════════════════════════════════
         if service == "capabilities":
+            seerr_url = cfg.get(CONF_SEERR_URL, '').lower()
+            seerr_type = 'jellyseerr' if 'jelly' in seerr_url else 'overseerr'
             return web.json_response({
                 "qbit":       bool(cfg.get(CONF_QBIT_URL)),
                 "sabnzbd":    bool(cfg.get(CONF_SAB_URL)),
@@ -198,6 +200,7 @@ class ArrStackProxyView(HomeAssistantView):
                 "jellystat":  bool(cfg.get(CONF_JELLYSTAT_URL)),
                 "trakt":      bool(cfg.get(CONF_TRAKT_CLIENT_ID)),
                 "prowlarr":   bool(cfg.get(CONF_PROWLARR_URL)),
+                "seerrType":  seerr_type,
             })
 
         # ════════════════════════════════════════════
@@ -1532,6 +1535,155 @@ class ArrStackProxyView(HomeAssistantView):
                     await r.read()
                     return web.json_response({"ok": r.status < 400, "status": r.status}, status=200)
 
+            # GET plex/lookup?tmdbId=X or ?tvdbId=X → find Plex item by external ID
+            # Tries multiple GUID formats (new agent, old agent) then per-section fallback.
+            if path == "lookup" and method == "GET":
+                tmdb_id = request.rel_url.query.get("tmdbId")
+                tvdb_id = request.rel_url.query.get("tvdbId")
+                if not tmdb_id and not tvdb_id:
+                    return web.json_response({"error": "tmdbId or tvdbId required"}, status=400)
+
+                async def _plex_search_guid(guid_str):
+                    async with http.get(
+                        f"{base}/library/all",
+                        headers=plex_hdrs,
+                        params={"guid": guid_str},
+                        timeout=aiohttp.ClientTimeout(total=10),
+                        ssl=ssl,
+                    ) as r:
+                        d = await r.json(content_type=None)
+                        items = d.get("MediaContainer", {}).get("Metadata", [])
+                        _LOGGER.warning("arr_stack plex/lookup _search_guid(%s) → %d results", guid_str, len(items))
+                        return items
+
+                async def _plex_sections():
+                    try:
+                        async with http.get(
+                            f"{base}/library/sections",
+                            headers=plex_hdrs,
+                            timeout=aiohttp.ClientTimeout(total=5),
+                            ssl=ssl,
+                        ) as r:
+                            sd = await r.json(content_type=None)
+                            return sd.get("MediaContainer", {}).get("Directory", [])
+                    except Exception:
+                        return []
+
+                async def _plex_search_sections(guids_to_try, section_type=None):
+                    """Filter-based search per section (works if Plex supports guid= filter)."""
+                    sections = await _plex_sections()
+                    for section in sections:
+                        if section_type and section.get("type") != section_type:
+                            continue
+                        key = section.get("key")
+                        if not key:
+                            continue
+                        for g in guids_to_try:
+                            try:
+                                async with http.get(
+                                    f"{base}/library/sections/{key}/all",
+                                    headers=plex_hdrs,
+                                    params={"guid": g},
+                                    timeout=aiohttp.ClientTimeout(total=10),
+                                    ssl=ssl,
+                                ) as r:
+                                    d = await r.json(content_type=None)
+                                    items = d.get("MediaContainer", {}).get("Metadata", [])
+                                    if items:
+                                        sec_title = section.get("title", "")
+                                        for it in items:
+                                            if not it.get("librarySectionTitle"):
+                                                it["librarySectionTitle"] = sec_title
+                                        return items
+                            except Exception:
+                                continue
+                    return []
+
+                async def _plex_scan_sections(match_guids, section_type=None):
+                    """Brute-force: fetch all items per section, match Guid[] locally."""
+                    sections = await _plex_sections()
+                    match_set = set(match_guids)
+                    for section in sections:
+                        if section_type and section.get("type") != section_type:
+                            continue
+                        key = section.get("key")
+                        if not key:
+                            continue
+                        try:
+                            async with http.get(
+                                f"{base}/library/sections/{key}/all",
+                                headers=plex_hdrs,
+                                params={"includeGuids": "1"},
+                                timeout=aiohttp.ClientTimeout(total=30),
+                                ssl=ssl,
+                            ) as r:
+                                d = await r.json(content_type=None)
+                                sec_title = section.get("title", "")
+                                for item in d.get("MediaContainer", {}).get("Metadata", []):
+                                    if not item.get("librarySectionTitle"):
+                                        item["librarySectionTitle"] = sec_title
+                                    # Check primary guid
+                                    if item.get("guid", "") in match_set:
+                                        return [item]
+                                    # Check Guid[] array (new Plex agent)
+                                    for g in item.get("Guid", []):
+                                        if g.get("id", "") in match_set:
+                                            return [item]
+                        except Exception:
+                            continue
+                    return []
+
+                items = []
+                if tmdb_id:
+                    new_guid  = f"tmdb://{tmdb_id}"
+                    old_guid  = f"com.plexapp.agents.themoviedb://{tmdb_id}"
+                    old_guid2 = f"com.plexapp.agents.themoviedb://{tmdb_id}?lang=en"
+                    all_guids = [new_guid, old_guid, old_guid2]
+                    items = await _plex_search_guid(new_guid)
+                    if not items:
+                        items = await _plex_search_guid(old_guid)
+                    if not items:
+                        items = await _plex_search_sections(all_guids, section_type="movie")
+                    if not items:
+                        items = await _plex_scan_sections(all_guids, section_type="movie")
+                elif tvdb_id:
+                    new_guid  = f"tvdb://{tvdb_id}"
+                    old_guid  = f"com.plexapp.agents.thetvdb://{tvdb_id}"
+                    old_guid2 = f"com.plexapp.agents.thetvdb://{tvdb_id}?lang=en"
+                    all_guids = [new_guid, old_guid, old_guid2]
+                    items = await _plex_search_guid(new_guid)
+                    if not items:
+                        items = await _plex_search_guid(old_guid)
+                    if not items:
+                        items = await _plex_search_sections(all_guids, section_type="show")
+                    if not items:
+                        items = await _plex_scan_sections(all_guids, section_type="show")
+
+                if not items:
+                    return web.json_response({"error": "not_found"}, status=404)
+                item = items[0]
+                return web.json_response({
+                    "plex_key": f"/library/metadata/{item.get('ratingKey')}",
+                    "title": item.get("title"),
+                    "library": item.get("librarySectionTitle"),
+                    "type": item.get("type"),
+                })
+
+            # GET plex/libraries → /library/sections (library names + types)
+            if path == "libraries" and method == "GET":
+                async with http.get(
+                    f"{base}/library/sections",
+                    headers=plex_hdrs,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                    ssl=ssl,
+                ) as r:
+                    data = await r.json(content_type=None)
+                    sections = data.get("MediaContainer", {}).get("Directory", [])
+                    return web.json_response([
+                        {"key": s.get("key"), "title": s.get("title"), "type": s.get("type")}
+                        for s in sections
+                    ])
+
         # ════════════════════════════════════════════
         # TMDB — discover proxy (fallback when Overseerr not configured)
         # ════════════════════════════════════════════
@@ -1775,8 +1927,13 @@ class ArrStackProxyView(HomeAssistantView):
                 params = {"page": page, "pageSize": page_size, "sortKey": "date", "sortDirection": "descending"}
                 if request.query.get("indexerId"): params["indexerId"] = request.query["indexerId"]
                 if request.query.get("eventType"): params["eventType"] = request.query["eventType"]
-                async with http.get(f"{base}/api/v1/history", headers=hdrs, params=params, ssl=ssl) as r:
-                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+                try:
+                    async with http.get(f"{base}/api/v1/history", headers=hdrs, params=params, ssl=ssl) as r:
+                        if r.status != 200:
+                            return web.json_response({"records": [], "totalRecords": 0})
+                        return web.Response(body=await r.read(), content_type="application/json", status=200)
+                except Exception:
+                    return web.json_response({"records": [], "totalRecords": 0})
 
             # History delete
             if path.startswith("history/") and method == "DELETE":
