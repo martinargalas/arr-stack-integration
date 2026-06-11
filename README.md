@@ -30,6 +30,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Sonarr 2 | Second Sonarr instance (e.g. 4K) | Optional |
 | qBittorrent | Torrent download client | Optional |
 | SABnzbd | Usenet download client | Optional |
+| NZBGet | Usenet download client | Optional |
 | Overseerr / Jellyseerr | Media discovery & requests | Optional |
 | Bazarr | Subtitle management | Optional |
 | Plex | Stream monitoring & playback control | Optional |
@@ -78,7 +79,7 @@ Choose which optional services you want to configure. Only the selected steps wi
 
 | Toggle | Services configured |
 |--------|-------------------|
-| Downloads | qBittorrent, SABnzbd |
+| Downloads | qBittorrent, SABnzbd, NZBGet |
 | 2nd instances | Radarr 2, Sonarr 2 |
 | Bazarr | Bazarr |
 | Discovery | Overseerr / Jellyseerr |
@@ -100,7 +101,7 @@ Choose which optional services you want to configure. Only the selected steps wi
 
 ---
 
-### Downloads — qBittorrent + SABnzbd *(optional)*
+### Downloads — qBittorrent + SABnzbd + NZBGet *(optional)*
 
 | Field | Example |
 |-------|---------|
@@ -109,6 +110,9 @@ Choose which optional services you want to configure. Only the selected steps wi
 | qBittorrent password | `••••` |
 | SABnzbd URL | `http://192.168.1.10:8080` |
 | SABnzbd API key | Find in SABnzbd → Config → General |
+| NZBGet URL | `http://192.168.1.10:6789` |
+| NZBGet username | `nzbget` (default) |
+| NZBGet password | Find in NZBGet → Settings → Security |
 
 Leave any field empty to skip that service individually.
 
