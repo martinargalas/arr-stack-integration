@@ -363,8 +363,8 @@ class ArrStackProxyView(HomeAssistantView):
                     data = await _nzbget_rpc("pausedownload")
                 elif mode == "resume":
                     data = await _nzbget_rpc("resumedownload")
-                elif mode in ("group_pause", "group_resume", "group_delete"):
-                    cmd_map = {"group_pause": "GroupPause", "group_resume": "GroupResume", "group_delete": "GroupDelete"}
+                elif mode in ("group_pause", "group_resume", "group_delete", "group_redownload"):
+                    cmd_map = {"group_pause": "GroupPause", "group_resume": "GroupResume", "group_delete": "GroupDelete", "group_redownload": "HistoryRedownload"}
                     data = await _nzbget_rpc("editqueue", [cmd_map[mode], "", [int(nzbid)]])
                 else:
                     return web.json_response({"error": "unknown mode"}, status=400)
