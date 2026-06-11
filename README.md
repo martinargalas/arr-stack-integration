@@ -29,6 +29,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Radarr 2 | Second Radarr instance (e.g. 4K) | Optional |
 | Sonarr 2 | Second Sonarr instance (e.g. 4K) | Optional |
 | qBittorrent | Torrent download client | Optional |
+| Deluge | Torrent download client | Optional |
 | SABnzbd | Usenet download client | Optional |
 | NZBGet | Usenet download client | Optional |
 | Overseerr / Jellyseerr | Media discovery & requests | Optional |
@@ -79,7 +80,7 @@ Choose which optional services you want to configure. Only the selected steps wi
 
 | Toggle | Services configured |
 |--------|-------------------|
-| Downloads | qBittorrent, SABnzbd, NZBGet |
+| Downloads | qBittorrent, Deluge, SABnzbd, NZBGet |
 | 2nd instances | Radarr 2, Sonarr 2 |
 | Bazarr | Bazarr |
 | Discovery | Overseerr / Jellyseerr |
@@ -101,13 +102,15 @@ Choose which optional services you want to configure. Only the selected steps wi
 
 ---
 
-### Downloads — qBittorrent + SABnzbd + NZBGet *(optional)*
+### Downloads — qBittorrent + Deluge + SABnzbd + NZBGet *(optional)*
 
 | Field | Example |
 |-------|---------|
 | qBittorrent URL | `http://192.168.1.10:8080` |
 | qBittorrent username | `admin` |
 | qBittorrent password | `••••` |
+| Deluge URL | `http://192.168.1.10:8112` |
+| Deluge password | Your Deluge Web UI password |
 | SABnzbd URL | `http://192.168.1.10:8080` |
 | SABnzbd API key | Find in SABnzbd → Config → General |
 | NZBGet URL | `http://192.168.1.10:6789` |

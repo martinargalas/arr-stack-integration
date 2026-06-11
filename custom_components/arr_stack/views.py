@@ -18,6 +18,7 @@ from .const import (
     CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
     CONF_SAB_URL, CONF_SAB_KEY,
     CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS,
+    CONF_DELUGE_URL, CONF_DELUGE_PASS,
     CONF_RADARR_URL, CONF_RADARR_KEY,
     CONF_RADARR2_URL, CONF_RADARR2_KEY,
     CONF_SONARR_URL, CONF_SONARR_KEY,
@@ -194,6 +195,7 @@ class ArrStackProxyView(HomeAssistantView):
                 "qbit":       bool(cfg.get(CONF_QBIT_URL)),
                 "sabnzbd":    bool(cfg.get(CONF_SAB_URL)),
                 "nzbget":     bool(cfg.get(CONF_NZBGET_URL)),
+                "deluge":     bool(cfg.get(CONF_DELUGE_URL)),
                 "radarr2":    bool(cfg.get(CONF_RADARR2_URL)),
                 "sonarr2":    bool(cfg.get(CONF_SONARR2_URL)),
                 "bazarr":     bool(cfg.get(CONF_BAZARR_URL)),
@@ -369,6 +371,61 @@ class ArrStackProxyView(HomeAssistantView):
                 else:
                     return web.json_response({"error": "unknown mode"}, status=400)
                 return web.json_response({"ok": data.get("result", False)})
+
+        # ════════════════════════════════════════════
+        # Deluge
+        # ════════════════════════════════════════════
+        elif service == "deluge":
+            base     = cfg.get(CONF_DELUGE_URL, "").rstrip("/")
+            password = cfg.get(CONF_DELUGE_PASS, "") or ""
+            rpc_url  = f"{base}/json"
+
+            async def _deluge_rpc(method, params=None, *, _session):
+                async with _session.post(
+                    rpc_url,
+                    json={"method": method, "params": params or [], "id": 1},
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    ssl=ssl,
+                ) as r:
+                    return await r.json()
+
+            jar = aiohttp.CookieJar(unsafe=True)
+            async with aiohttp.ClientSession(cookie_jar=jar) as http:
+                await _deluge_rpc("auth.login", [password], _session=http)
+
+                if path == "queue":
+                    fields = ["name", "state", "progress", "download_payload_rate",
+                              "upload_payload_rate", "total_size", "total_done",
+                              "num_seeds", "num_peers", "eta", "hash"]
+                    data = await _deluge_rpc("core.get_torrents_status", [{}, fields], _session=http)
+                    raw = data.get("result") or {}
+                    torrents = [{"hash": h, **v} for h, v in raw.items()]
+                    return web.json_response(torrents)
+
+                elif path == "status":
+                    data = await _deluge_rpc("core.get_transfer_info", [], _session=http)
+                    return web.json_response(data.get("result") or {})
+
+                elif path == "action":
+                    body = await request.json()
+                    mode = body.get("action", "")
+                    torrent_id = body.get("id", "")
+
+                    if mode == "global_pause":
+                        await _deluge_rpc("core.pause_all_torrents", [], _session=http)
+                    elif mode == "global_resume":
+                        await _deluge_rpc("core.resume_all_torrents", [], _session=http)
+                    elif mode == "pause" and torrent_id:
+                        await _deluge_rpc("core.pause_torrent", [[torrent_id]], _session=http)
+                    elif mode == "resume" and torrent_id:
+                        await _deluge_rpc("core.resume_torrent", [[torrent_id]], _session=http)
+                    elif mode == "delete" and torrent_id:
+                        await _deluge_rpc("core.remove_torrent", [torrent_id, False], _session=http)
+                    elif mode == "delete_files" and torrent_id:
+                        await _deluge_rpc("core.remove_torrent", [torrent_id, True], _session=http)
+                    else:
+                        return web.json_response({"error": "unknown mode"}, status=400)
+                    return web.json_response({"ok": True})
 
         # ════════════════════════════════════════════
         # Radarr

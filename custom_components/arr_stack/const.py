@@ -11,6 +11,9 @@ CONF_NZBGET_URL  = "nzbget_url"
 CONF_NZBGET_USER = "nzbget_user"
 CONF_NZBGET_PASS = "nzbget_password"
 
+CONF_DELUGE_URL  = "deluge_url"
+CONF_DELUGE_PASS = "deluge_password"
+
 CONF_RADARR_URL = "radarr_url"
 CONF_RADARR_KEY = "radarr_api_key"
 

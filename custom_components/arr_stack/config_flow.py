@@ -17,6 +17,7 @@ from .const import (
     CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
     CONF_SAB_URL, CONF_SAB_KEY,
     CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS,
+    CONF_DELUGE_URL, CONF_DELUGE_PASS,
     CONF_RADARR_URL, CONF_RADARR_KEY,
     CONF_RADARR2_URL, CONF_RADARR2_KEY,
     CONF_SONARR_URL, CONF_SONARR_KEY,
@@ -212,6 +213,32 @@ async def _test_nzbget(session: aiohttp.ClientSession, url: str, user: str, pass
             return None
     except Exception as e:
         return _log_exc("nzbget", rpc_url, e)
+
+
+async def _test_deluge(session: aiohttp.ClientSession, url: str, password: str, ssl=None) -> str | None:
+    if not url:
+        return None
+    if err := _url_error(url):
+        return err
+    rpc_url = f"{url.rstrip('/')}/json"
+    _LOGGER.debug("arr_stack [deluge] testing connection → %s", rpc_url)
+    try:
+        async with session.post(
+            rpc_url,
+            json={"method": "auth.login", "params": [password or ""], "id": 1},
+            timeout=aiohttp.ClientTimeout(total=8),
+            ssl=ssl,
+        ) as r:
+            if r.status == 401:
+                return "invalid_auth"
+            if r.status != 200:
+                return "cannot_connect"
+            data = await r.json()
+            if data.get("result") is False:
+                return "invalid_auth"
+            return None
+    except Exception as e:
+        return _log_exc("deluge", rpc_url, e)
 
 
 async def _test_arr(session: aiohttp.ClientSession, url: str, key: str, name: str, ssl=None) -> str | None:
@@ -432,7 +459,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Derive defaults from existing data
         d = self._data
         schema = vol.Schema({
-            vol.Optional('enable_downloads', default=bool(d.get(CONF_QBIT_URL) or d.get(CONF_SAB_URL) or d.get(CONF_NZBGET_URL))): bool,
+            vol.Optional('enable_downloads', default=bool(d.get(CONF_QBIT_URL) or d.get(CONF_SAB_URL) or d.get(CONF_NZBGET_URL) or d.get(CONF_DELUGE_URL))): bool,
             vol.Optional('enable_quality',   default=bool(d.get(CONF_RADARR2_URL) or d.get(CONF_SONARR2_URL))): bool,
             vol.Optional('enable_bazarr',    default=bool(d.get(CONF_BAZARR_URL))): bool,
             vol.Optional('enable_discovery', default=bool(d.get(CONF_SEERR_URL))): bool,
@@ -489,9 +516,20 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors[CONF_NZBGET_URL] = err
 
             if not errors:
+                err = await _test_deluge(
+                    session,
+                    user_input.get(CONF_DELUGE_URL, ""),
+                    user_input.get(CONF_DELUGE_PASS, ""),
+                    ssl=ssl,
+                )
+                if err:
+                    errors[CONF_DELUGE_URL] = err
+
+            if not errors:
                 for key in [CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
                              CONF_SAB_URL, CONF_SAB_KEY,
-                             CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS]:
+                             CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS,
+                             CONF_DELUGE_URL, CONF_DELUGE_PASS]:
                     self._data[key] = user_input.get(key, "")
                 return await self._next_step()
 
@@ -504,12 +542,15 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_NZBGET_URL):   str,
             vol.Optional(CONF_NZBGET_USER):  str,
             vol.Optional(CONF_NZBGET_PASS):  str,
+            vol.Optional(CONF_DELUGE_URL):   str,
+            vol.Optional(CONF_DELUGE_PASS):  str,
         })
         suggested = self._data if self._data else {
             CONF_QBIT_URL:   "http://192.168.1.x:8080",
             CONF_QBIT_USER:  "admin",
             CONF_SAB_URL:    "http://192.168.1.x:8080",
             CONF_NZBGET_URL: "http://192.168.1.x:6789",
+            CONF_DELUGE_URL: "http://192.168.1.x:8112",
         }
         schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(
