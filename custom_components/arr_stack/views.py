@@ -177,7 +177,7 @@ class ArrStackProxyView(HomeAssistantView):
     ) -> web.Response:
         debug = bool(request.query.get("_debug"))
         if debug:
-            _LOGGER.warning("arr_stack → %s/%s [%s]", service, path, method)
+            _LOGGER.debug("arr_stack → %s/%s [%s]", service, path, method)
         cfg = self._cfg
         http = async_get_clientsession(self._hass)
         ssl = False if cfg.get(CONF_SKIP_SSL_VERIFY) else None
@@ -214,10 +214,10 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "torrents":
                 url = f"{cfg[CONF_QBIT_URL]}/api/v2/torrents/info?filter=all"
-                if debug: _LOGGER.warning("arr_stack qbit → GET %s", url)
+                if debug: _LOGGER.debug("arr_stack qbit → GET %s", url)
                 async with qs.get(url, ssl=ssl) as r:
                     body = await r.read()
-                    if debug: _LOGGER.warning("arr_stack qbit ← status=%s len=%s", r.status, len(body))
+                    if debug: _LOGGER.debug("arr_stack qbit ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "transfer":
@@ -280,10 +280,10 @@ class ArrStackProxyView(HomeAssistantView):
             key = cfg.get(CONF_SAB_KEY, "")
 
             if path == "queue":
-                if debug: _LOGGER.warning("arr_stack sabnzbd → GET %s/api?mode=queue (apikey=REDACTED)", base)
+                if debug: _LOGGER.debug("arr_stack sabnzbd → GET %s/api?mode=queue (apikey=REDACTED)", base)
                 async with http.get(f"{base}/api?mode=queue&output=json&apikey={key}", ssl=ssl) as r:
                     body = await r.read()
-                    if debug: _LOGGER.warning("arr_stack sabnzbd ← status=%s len=%s", r.status, len(body))
+                    if debug: _LOGGER.debug("arr_stack sabnzbd ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "history":
@@ -323,10 +323,10 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "movies":
                 url = f"{base}/api/v3/movie"
-                if debug: _LOGGER.warning("arr_stack radarr → GET %s", url)
+                if debug: _LOGGER.debug("arr_stack radarr → GET %s", url)
                 async with http.get(url, headers=hdrs, ssl=ssl) as r:
                     body = await r.read()
-                    if debug: _LOGGER.warning("arr_stack radarr ← status=%s len=%s", r.status, len(body))
+                    if debug: _LOGGER.debug("arr_stack radarr ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "profiles":
@@ -559,10 +559,10 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "series" and method == "GET":
                 url = f"{base}/api/v3/series"
-                if debug: _LOGGER.warning("arr_stack sonarr → GET %s", url)
+                if debug: _LOGGER.debug("arr_stack sonarr → GET %s", url)
                 async with http.get(url, headers=hdrs, ssl=ssl) as r:
                     body = await r.read()
-                    if debug: _LOGGER.warning("arr_stack sonarr ← status=%s len=%s", r.status, len(body))
+                    if debug: _LOGGER.debug("arr_stack sonarr ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "series" and method == "POST":
@@ -650,10 +650,10 @@ class ArrStackProxyView(HomeAssistantView):
                 sort_dir  = "descending" if sort_dir in ("desc", "descending") else "ascending"
                 req_url = f"{base}/api/v3/wanted/missing"
                 req_params = {"page": page, "pageSize": page_size, "sortKey": sort_key, "sortDirection": sort_dir, "includeSeries": "true"}
-                _LOGGER.warning("arr_stack sonarr wanted/missing → GET %s params=%s", req_url, req_params)
+                _LOGGER.debug("arr_stack sonarr wanted/missing → GET %s params=%s", req_url, req_params)
                 async with http.get(req_url, headers=hdrs, params=req_params, ssl=ssl) as r:
                     body = await r.read()
-                    _LOGGER.warning("arr_stack sonarr wanted/missing ← status=%s body_start=%s", r.status, body[:200])
+                    _LOGGER.debug("arr_stack sonarr wanted/missing ← status=%s body_start=%s", r.status, body[:200])
                     return web.Response(body=body, content_type="application/json", status=r.status)
 
             # Smaže seriál z knihovny
@@ -741,10 +741,10 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "movies":
                 url = f"{base}/api/v3/movie"
-                if debug: _LOGGER.warning("arr_stack radarr2 → GET %s", url)
+                if debug: _LOGGER.debug("arr_stack radarr2 → GET %s", url)
                 async with http.get(url, headers=hdrs, ssl=ssl) as r:
                     body = await r.read()
-                    if debug: _LOGGER.warning("arr_stack radarr2 ← status=%s len=%s", r.status, len(body))
+                    if debug: _LOGGER.debug("arr_stack radarr2 ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "profiles":
@@ -912,10 +912,10 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "series" and method == "GET":
                 url = f"{base}/api/v3/series"
-                if debug: _LOGGER.warning("arr_stack sonarr2 → GET %s", url)
+                if debug: _LOGGER.debug("arr_stack sonarr2 → GET %s", url)
                 async with http.get(url, headers=hdrs, ssl=ssl) as r:
                     body = await r.read()
-                    if debug: _LOGGER.warning("arr_stack sonarr2 ← status=%s len=%s", r.status, len(body))
+                    if debug: _LOGGER.debug("arr_stack sonarr2 ← status=%s len=%s", r.status, len(body))
                     return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "series" and method == "POST":
@@ -1243,7 +1243,7 @@ class ArrStackProxyView(HomeAssistantView):
                 server_settings = {k: v for k, v in body.items() if k != "requestId" and v is not None}
                 # Step 1: update request with server settings if provided
                 if server_settings:
-                    _LOGGER.warning("arr_stack approve → updating requestId=%s settings=%s", req_id, server_settings)
+                    _LOGGER.debug("arr_stack approve → updating requestId=%s settings=%s", req_id, server_settings)
                     async with http.put(
                         f"{base}/api/v1/request/{req_id}",
                         headers={**hdrs, "Content-Type": "application/json"},
@@ -1251,7 +1251,7 @@ class ArrStackProxyView(HomeAssistantView):
                         ssl=ssl,
                     ) as r_put:
                         put_status = r_put.status
-                        _LOGGER.warning("arr_stack approve → PUT status=%s", put_status)
+                        _LOGGER.debug("arr_stack approve → PUT status=%s", put_status)
                 # Step 2: approve
                 async with http.post(
                     f"{base}/api/v1/request/{req_id}/approve",
@@ -1260,7 +1260,7 @@ class ArrStackProxyView(HomeAssistantView):
                     ssl=ssl,
                 ) as r:
                     resp_body = await r.read()
-                    _LOGGER.warning("arr_stack approve ← status=%s body=%s", r.status, resp_body[:300])
+                    _LOGGER.debug("arr_stack approve ← status=%s body=%s", r.status, resp_body[:300])
                     return web.Response(
                         body=resp_body,
                         content_type="application/json",
@@ -1553,7 +1553,7 @@ class ArrStackProxyView(HomeAssistantView):
                     ) as r:
                         d = await r.json(content_type=None)
                         items = d.get("MediaContainer", {}).get("Metadata", [])
-                        _LOGGER.warning("arr_stack plex/lookup _search_guid(%s) → %d results", guid_str, len(items))
+                        _LOGGER.debug("arr_stack plex/lookup _search_guid(%s) → %d results", guid_str, len(items))
                         return items
 
                 async def _plex_sections():

@@ -1,6 +1,11 @@
 """Config flow — dynamic step selection."""
+import logging
+import socket
+from urllib.parse import urlparse
 import aiohttp
 import voluptuous as vol
+
+_LOGGER = logging.getLogger(__name__)
 
 from homeassistant import config_entries
 from homeassistant.helpers import issue_registry as ir
@@ -35,15 +40,86 @@ def _url_error(url: str) -> str | None:
         return "invalid_url"
     return None
 
-def _map_exc(e: Exception) -> str:
-    if isinstance(e, aiohttp.InvalidURL):
-        return "invalid_url"
+def _log_exc(service: str, url: str, e: Exception) -> str:
+    """Log connection exception with actionable detail, return error key."""
+    err_str = str(e)
     if isinstance(e, aiohttp.ClientConnectorError):
+        dns_markers = ("nodename nor servname", "Name or service not known", "getaddrinfo failed", "Temporary failure in name resolution")
+        if any(m in err_str for m in dns_markers):
+            parsed = urlparse(url)
+            hostname = parsed.hostname or url
+            port = parsed.port or parsed.scheme
+
+            # OS-level error detail
+            os_err = getattr(e, "os_error", None)
+            os_detail = ""
+            if os_err:
+                errno_val = getattr(os_err, "errno", None)
+                strerror = getattr(os_err, "strerror", None)
+                if errno_val and strerror:
+                    os_detail = f" [errno {errno_val}: {strerror}]"
+                elif strerror:
+                    os_detail = f" [{strerror}]"
+
+            # .local domains need mDNS which doesn't work in Docker
+            local_hint = (
+                " '.local' domains use mDNS which does not work inside Docker containers —"
+                " use an IP address or a regular DNS name instead."
+                if hostname.endswith(".local") else ""
+            )
+
+            _LOGGER.warning(
+                "arr_stack [%s] DNS resolution failed — cannot resolve hostname '%s' (port %s).%s"
+                " Home Assistant's DNS server does not know this name."
+                " Fixes: (1) use an IP address instead of a domain name,"
+                " (2) set a local DNS server in your Docker Compose (dns: key),"
+                " (3) add a hosts entry in HA's /etc/hosts via a customisation."
+                " Full URL tested: %s%s",
+                service, hostname, port, local_hint, url, os_detail,
+            )
+        elif "Connection refused" in err_str:
+            _LOGGER.warning(
+                "arr_stack [%s] connection refused at %s — "
+                "service is not running or the port is wrong. Detail: %s",
+                service, url, e,
+            )
+        elif "Network unreachable" in err_str or "No route to host" in err_str:
+            _LOGGER.warning(
+                "arr_stack [%s] network unreachable for %s — "
+                "check firewall rules or VLAN routing between HA and the service. Detail: %s",
+                service, url, e,
+            )
+        elif "timed out" in err_str or "ConnectTimeoutError" in type(e).__name__:
+            _LOGGER.warning(
+                "arr_stack [%s] connection timed out for %s — "
+                "host exists but is not responding (firewall drop, wrong IP?). Detail: %s",
+                service, url, e,
+            )
+        else:
+            _LOGGER.warning("arr_stack [%s] cannot connect to %s — %s: %s", service, url, type(e).__name__, e)
         return "cannot_connect"
-    if isinstance(e, aiohttp.ServerTimeoutError):
-        return "timeout"
     if isinstance(e, aiohttp.ClientSSLError):
+        _LOGGER.warning(
+            "arr_stack [%s] SSL error for %s — "
+            "if using a self-signed certificate, enable 'Skip SSL certificate verification' "
+            "in Global Settings. Detail: %s",
+            service, url, e,
+        )
         return "ssl_error"
+    if isinstance(e, aiohttp.ServerTimeoutError):
+        _LOGGER.warning(
+            "arr_stack [%s] server timeout for %s (8 s) — "
+            "service is reachable but not responding in time.",
+            service, url,
+        )
+        return "timeout"
+    if isinstance(e, aiohttp.InvalidURL):
+        _LOGGER.warning("arr_stack [%s] invalid URL '%s' — %s", service, url, e)
+        return "invalid_url"
+    _LOGGER.error(
+        "arr_stack [%s] unexpected error for %s — %s: %s",
+        service, url, type(e).__name__, e,
+    )
     return "unknown"
 
 
@@ -54,10 +130,12 @@ async def _test_qbit(session: aiohttp.ClientSession, url: str, user: str, passwo
         return None
     if err := _url_error(url):
         return err
+    test_url = f"{url.rstrip('/')}/api/v2/auth/login"
+    _LOGGER.debug("arr_stack [qbittorrent] testing connection → %s", test_url)
     try:
         base = url.rstrip('/')
         async with session.post(
-            f"{base}/api/v2/auth/login",
+            test_url,
             data={"username": user, "password": password},
             headers={"Origin": base, "Referer": base + "/"},
             timeout=aiohttp.ClientTimeout(total=8),
@@ -74,7 +152,7 @@ async def _test_qbit(session: aiohttp.ClientSession, url: str, user: str, passwo
                 return "qbit_bad_credentials"
             return "qbit_login_failed"
     except Exception as e:
-        return _map_exc(e)
+        return _log_exc("qbittorrent", test_url, e)
 
 
 async def _test_sabnzbd(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
@@ -82,9 +160,11 @@ async def _test_sabnzbd(session: aiohttp.ClientSession, url: str, key: str, ssl=
         return None
     if err := _url_error(url):
         return err
+    test_url = f"{url.rstrip('/')}/api"
+    _LOGGER.debug("arr_stack [sabnzbd] testing connection → %s", test_url)
     try:
         async with session.get(
-            f"{url.rstrip('/')}/api",
+            test_url,
             params={"mode": "version", "output": "json", "apikey": key},
             timeout=aiohttp.ClientTimeout(total=8),
             ssl=ssl,
@@ -97,36 +177,47 @@ async def _test_sabnzbd(session: aiohttp.ClientSession, url: str, key: str, ssl=
                 return "sabnzbd_bad_key"
             return "sabnzbd_bad_key"
     except Exception as e:
-        return _map_exc(e)
+        return _log_exc("sabnzbd", test_url, e)
 
 
 async def _test_arr(session: aiohttp.ClientSession, url: str, key: str, name: str, ssl=None) -> str | None:
     if err := _url_error(url):
         return err
+    test_url = f"{url.rstrip('/')}/api/v3/system/status"
+    _LOGGER.debug("arr_stack [%s] testing connection → %s (ssl_verify=%s)", name, test_url, ssl)
     try:
         async with session.get(
-            f"{url.rstrip('/')}/api/v3/system/status",
+            test_url,
             headers={"X-Api-Key": key},
             timeout=aiohttp.ClientTimeout(total=8),
             ssl=ssl,
         ) as r:
+            _LOGGER.debug("arr_stack [%s] response status=%s", name, r.status)
             if r.status == 200:
                 return None
             if r.status == 401:
+                _LOGGER.warning("arr_stack [%s] API key rejected (HTTP 401) for %s", name, test_url)
                 return f"{name}_bad_key"
             if r.status == 404:
+                _LOGGER.warning(
+                    "arr_stack [%s] HTTP 404 for %s — wrong base URL or port (got HTML instead of API response?)",
+                    name, test_url,
+                )
                 return f"{name}_wrong_port"
+            _LOGGER.warning("arr_stack [%s] unexpected HTTP %s for %s", name, r.status, test_url)
             return f"{name}_error"
     except Exception as e:
-        return _map_exc(e)
+        return _log_exc(name, test_url, e)
 
 
 async def _test_overseerr(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
     if err := _url_error(url):
         return err
+    test_url = f"{url.rstrip('/')}/api/v1/settings/about"
+    _LOGGER.debug("arr_stack [overseerr] testing connection → %s", test_url)
     try:
         async with session.get(
-            f"{url.rstrip('/')}/api/v1/settings/about",
+            test_url,
             headers={"X-Api-Key": key, "Accept": "application/json"},
             timeout=aiohttp.ClientTimeout(total=8),
             ssl=ssl,
@@ -139,7 +230,7 @@ async def _test_overseerr(session: aiohttp.ClientSession, url: str, key: str, ss
                 return "overseerr_wrong_port"
             return "overseerr_error"
     except Exception as e:
-        return _map_exc(e)
+        return _log_exc("overseerr", test_url, e)
 
 
 async def _test_overseerr_family(
@@ -172,9 +263,11 @@ async def _test_tautulli(session: aiohttp.ClientSession, url: str, key: str, ssl
         return None
     if err := _url_error(url):
         return err
+    test_url = f"{url.rstrip('/')}/api/v2"
+    _LOGGER.debug("arr_stack [tautulli] testing connection → %s", test_url)
     try:
         async with session.get(
-            f"{url.rstrip('/')}/api/v2",
+            test_url,
             params={"apikey": key, "cmd": "get_activity"},
             timeout=aiohttp.ClientTimeout(total=8),
             ssl=ssl,
@@ -190,7 +283,7 @@ async def _test_tautulli(session: aiohttp.ClientSession, url: str, key: str, ssl
                 return "tautulli_wrong_port"
             return "tautulli_error"
     except Exception as e:
-        return _map_exc(e)
+        return _log_exc("tautulli", test_url, e)
 
 
 async def _test_jellystat(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
@@ -198,9 +291,11 @@ async def _test_jellystat(session: aiohttp.ClientSession, url: str, key: str, ss
         return None
     if err := _url_error(url):
         return err
+    test_url = url.rstrip('/')
+    _LOGGER.debug("arr_stack [jellystat] testing connection → %s", test_url)
     try:
         async with session.get(
-            url.rstrip('/'),
+            test_url,
             headers={"x-api-token": key, "Accept": "application/json"},
             timeout=aiohttp.ClientTimeout(total=8),
             ssl=ssl,
@@ -209,7 +304,7 @@ async def _test_jellystat(session: aiohttp.ClientSession, url: str, key: str, ss
                 return None
             return "jellystat_error"
     except Exception as e:
-        return _map_exc(e)
+        return _log_exc("jellystat", test_url, e)
 
 
 async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
@@ -217,9 +312,11 @@ async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str, ssl=N
         return None
     if err := _url_error(url):
         return err
+    test_url = f"{url.rstrip('/')}/api/system/status"
+    _LOGGER.debug("arr_stack [bazarr] testing connection → %s", test_url)
     try:
         async with session.get(
-            f"{url.rstrip('/')}/api/system/status",
+            test_url,
             headers={"X-API-KEY": key, "Accept": "application/json"},
             timeout=aiohttp.ClientTimeout(total=8),
             ssl=ssl,
@@ -232,7 +329,7 @@ async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str, ssl=N
                 return "bazarr_wrong_port"
             return "bazarr_error"
     except Exception as e:
-        return _map_exc(e)
+        return _log_exc("bazarr", test_url, e)
 
 
 # ── Config Flow ──────────────────────────────────────────────────────────────
