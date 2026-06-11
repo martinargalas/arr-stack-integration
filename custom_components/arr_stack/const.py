@@ -7,6 +7,10 @@ CONF_QBIT_PASS = "qbittorrent_password"
 CONF_SAB_URL = "sabnzbd_url"
 CONF_SAB_KEY = "sabnzbd_api_key"
 
+CONF_NZBGET_URL  = "nzbget_url"
+CONF_NZBGET_USER = "nzbget_user"
+CONF_NZBGET_PASS = "nzbget_password"
+
 CONF_RADARR_URL = "radarr_url"
 CONF_RADARR_KEY = "radarr_api_key"
 

@@ -1,5 +1,6 @@
 """HTTP proxy view — přeposílá requesty z karty na lokální služby (server-side, žádný CORS)."""
 import asyncio
+import base64
 import itertools
 import logging
 from urllib.parse import quote
@@ -16,6 +17,7 @@ from .const import (
     DOMAIN,
     CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
     CONF_SAB_URL, CONF_SAB_KEY,
+    CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS,
     CONF_RADARR_URL, CONF_RADARR_KEY,
     CONF_RADARR2_URL, CONF_RADARR2_KEY,
     CONF_SONARR_URL, CONF_SONARR_KEY,
@@ -191,6 +193,7 @@ class ArrStackProxyView(HomeAssistantView):
             return web.json_response({
                 "qbit":       bool(cfg.get(CONF_QBIT_URL)),
                 "sabnzbd":    bool(cfg.get(CONF_SAB_URL)),
+                "nzbget":     bool(cfg.get(CONF_NZBGET_URL)),
                 "radarr2":    bool(cfg.get(CONF_RADARR2_URL)),
                 "sonarr2":    bool(cfg.get(CONF_SONARR2_URL)),
                 "bazarr":     bool(cfg.get(CONF_BAZARR_URL)),
@@ -313,6 +316,59 @@ class ArrStackProxyView(HomeAssistantView):
                     url += f"&value={nzo_id}"
                 async with http.get(url, ssl=ssl) as r:
                     return web.json_response({"ok": r.status == 200})
+
+        # ════════════════════════════════════════════
+        # NZBGet
+        # ════════════════════════════════════════════
+        elif service == "nzbget":
+            base = cfg.get(CONF_NZBGET_URL, "").rstrip("/")
+            if not base:
+                return web.json_response({"error": "NZBGet not configured"}, status=503)
+            nzbget_user = cfg.get(CONF_NZBGET_USER, "") or "nzbget"
+            nzbget_pass = cfg.get(CONF_NZBGET_PASS, "") or ""
+            _nzbget_creds = f"{nzbget_user}:{nzbget_pass}"
+            _nzbget_auth_header = base64.b64encode(_nzbget_creds.encode('utf-8')).decode('ascii')
+            _nzbget_headers = {"Authorization": f"Basic {_nzbget_auth_header}"}
+            rpc_url = f"{base}/jsonrpc"
+
+            async def _nzbget_rpc(rpc_method, params=None):
+                async with http.post(
+                    rpc_url,
+                    json={"method": rpc_method, "params": params or []},
+                    headers=_nzbget_headers,
+                    ssl=ssl,
+                ) as r:
+                    return await r.json()
+
+            if path == "queue":
+                if debug: _LOGGER.debug("arr_stack nzbget → listgroups")
+                data = await _nzbget_rpc("listgroups", [0])
+                if debug: _LOGGER.debug("arr_stack nzbget ← listgroups %s items", len(data.get("result") or []))
+                return web.json_response(data)
+
+            if path == "status":
+                data = await _nzbget_rpc("status")
+                return web.json_response(data)
+
+            if path == "history":
+                data = await _nzbget_rpc("history", [False])
+                return web.json_response(data)
+
+            if path == "action" and method == "POST":
+                body = await request.json()
+                mode = body.get("mode", "")
+                nzbid = body.get("id")
+
+                if mode == "pause":
+                    data = await _nzbget_rpc("pausedownload")
+                elif mode == "resume":
+                    data = await _nzbget_rpc("resumedownload")
+                elif mode in ("group_pause", "group_resume", "group_delete"):
+                    cmd_map = {"group_pause": "GroupPause", "group_resume": "GroupResume", "group_delete": "GroupDelete"}
+                    data = await _nzbget_rpc("editqueue", [cmd_map[mode], "", [int(nzbid)]])
+                else:
+                    return web.json_response({"error": "unknown mode"}, status=400)
+                return web.json_response({"ok": data.get("result", False)})
 
         # ════════════════════════════════════════════
         # Radarr
