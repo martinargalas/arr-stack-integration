@@ -99,6 +99,8 @@ class ArrStackProxyView(HomeAssistantView):
         self._hass = hass
         # Dedikovaná session pro qBit — potřebuje cookie jar pro session auth
         self._qbit_session: aiohttp.ClientSession | None = None
+        # Session pro admin Overseerr požadavky — potřebuje cookie jar pro CSRF token
+        self._seerr_admin_session: aiohttp.ClientSession | None = None
         # Session pro rodinný Overseerr účet
         self._seerr_family_session: aiohttp.ClientSession | None = None
         # Cache pro auto-detekovanou Plex URL (když user nezadal manuální)
@@ -131,6 +133,65 @@ class ArrStackProxyView(HomeAssistantView):
         }, ssl=ssl) as r:
             await r.read()
 
+    def _csrf_from_jar(self, session: aiohttp.ClientSession) -> tuple[dict, dict]:
+        """Extrahuje XSRF-TOKEN a _csrf z cookie jaru — vrátí (extra_headers, cookies)."""
+        csrf_token = ""
+        _csrf_value = ""
+        for cookie in session.cookie_jar:
+            if cookie.key == "XSRF-TOKEN":
+                csrf_token = cookie.value
+            if cookie.key == "_csrf":
+                _csrf_value = cookie.value
+        hdrs = {**({"X-XSRF-TOKEN": csrf_token} if csrf_token else {})}
+        cookies = {}
+        if csrf_token:
+            cookies["XSRF-TOKEN"] = csrf_token
+        if _csrf_value:
+            cookies["_csrf"] = _csrf_value
+        return hdrs, cookies
+
+    async def _seerr_admin_sess(self) -> aiohttp.ClientSession:
+        """Vrátí (nebo vytvoří) aiohttp session s cookie jar pro admin Overseerr mutace."""
+        if self._seerr_admin_session is None or self._seerr_admin_session.closed:
+            self._seerr_admin_session = aiohttp.ClientSession(
+                cookie_jar=aiohttp.CookieJar(unsafe=True)
+            )
+        return self._seerr_admin_session
+
+    async def _seerr_csrf_hdrs(self, base: str, api_key: str, ssl) -> tuple[dict, dict]:
+        """Vrátí (headers, cookies) pro Overseerr POST/PUT/DELETE s CSRF ochranou.
+
+        Overseerr double-submit cookie pattern: GET nastaví XSRF-TOKEN + _csrf cookies,
+        POST musí posílat oba cookies explicitně + X-XSRF-TOKEN header (aiohttp neposílá
+        Secure-flagged cookies automaticky přes HTTP).
+        """
+        sess = await self._seerr_admin_sess()
+        hdrs_get = {"X-Api-Key": api_key, "Accept": "application/json"}
+        try:
+            async with sess.get(f"{base}/api/v1/auth/me", headers=hdrs_get, ssl=ssl) as _:
+                pass
+        except Exception:
+            pass
+        csrf_token = ""
+        _csrf_value = ""
+        for cookie in sess.cookie_jar:
+            if cookie.key == "XSRF-TOKEN":
+                csrf_token = cookie.value
+            if cookie.key == "_csrf":
+                _csrf_value = cookie.value
+        hdrs = {
+            "X-Api-Key": api_key,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            **({"X-XSRF-TOKEN": csrf_token} if csrf_token else {}),
+        }
+        cookies = {}
+        if csrf_token:
+            cookies["XSRF-TOKEN"] = csrf_token
+        if _csrf_value:
+            cookies["_csrf"] = _csrf_value
+        return hdrs, cookies
+
     async def _seerr_family_sess(self, ssl=None) -> aiohttp.ClientSession:
         """Vrátí (nebo vytvoří) aiohttp session s cookie jar pro rodinný Overseerr účet."""
         if self._seerr_family_session is None or self._seerr_family_session.closed:
@@ -142,11 +203,31 @@ class ArrStackProxyView(HomeAssistantView):
 
     async def _seerr_family_login(self, session: aiohttp.ClientSession, ssl=None) -> None:
         """Přihlásí se do Overseerr jako rodinný účet (nastaví session cookie)."""
-        url = f"{self._cfg[CONF_SEERR_URL]}/api/v1/auth/local"
-        async with session.post(url, json={
+        base = self._cfg.get(CONF_SEERR_URL, "")
+        # GET first to get CSRF cookies — Overseerr double-submit cookie pattern
+        csrf_token = ""
+        _csrf_value = ""
+        try:
+            async with session.get(f"{base}/api/v1/auth/me", ssl=ssl) as _:
+                pass
+            for cookie in session.cookie_jar:
+                if cookie.key == "XSRF-TOKEN":
+                    csrf_token = cookie.value
+                if cookie.key == "_csrf":
+                    _csrf_value = cookie.value
+        except Exception:
+            pass
+        login_hdrs = {"Accept": "application/json", "Content-Type": "application/json"}
+        req_cookies = {}
+        if csrf_token:
+            login_hdrs["X-XSRF-TOKEN"] = csrf_token
+            req_cookies["XSRF-TOKEN"] = csrf_token
+        if _csrf_value:
+            req_cookies["_csrf"] = _csrf_value
+        async with session.post(f"{base}/api/v1/auth/local", json={
             "email": self._cfg[CONF_SEERR_FAMILY_EMAIL],
             "password": self._cfg[CONF_SEERR_FAMILY_PASS],
-        }, headers={"Accept": "application/json"}, ssl=ssl) as r:
+        }, headers=login_hdrs, cookies=req_cookies if req_cookies else None, ssl=ssl) as r:
             await r.read()
 
     # ── Router ───────────────────────────────────────────────────────────
@@ -1333,20 +1414,23 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "request_delete" and method == "POST":
                 body = await request.json()
                 req_id = body.get("requestId")
-                async with http.delete(
-                    f"{base}/api/v1/request/{req_id}", headers=hdrs,
-                    ssl=ssl,
+                adsess = await self._seerr_admin_sess()
+                csrf_hdrs, csrf_cookies = await self._seerr_csrf_hdrs(base, cfg.get(CONF_SEERR_KEY, ""), ssl)
+                async with adsess.delete(
+                    f"{base}/api/v1/request/{req_id}", headers=csrf_hdrs,
+                    cookies=csrf_cookies or None, ssl=ssl,
                 ) as r:
                     return web.json_response({"ok": r.status in (200, 204)})
 
             if path.startswith("request/") and method == "PUT":
                 req_id = path.split("/", 1)[1]
                 body = await request.json()
-                async with http.put(
+                adsess = await self._seerr_admin_sess()
+                csrf_hdrs, csrf_cookies = await self._seerr_csrf_hdrs(base, cfg.get(CONF_SEERR_KEY, ""), ssl)
+                async with adsess.put(
                     f"{base}/api/v1/request/{req_id}",
-                    headers={**hdrs, "Content-Type": "application/json"},
-                    json=body,
-                    ssl=ssl,
+                    headers=csrf_hdrs, cookies=csrf_cookies or None,
+                    json=body, ssl=ssl,
                 ) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
@@ -1354,23 +1438,23 @@ class ArrStackProxyView(HomeAssistantView):
                 body = await request.json()
                 req_id = body.get("requestId")
                 server_settings = {k: v for k, v in body.items() if k != "requestId" and v is not None}
+                adsess = await self._seerr_admin_sess()
+                csrf_hdrs, csrf_cookies = await self._seerr_csrf_hdrs(base, cfg.get(CONF_SEERR_KEY, ""), ssl)
                 # Step 1: update request with server settings if provided
                 if server_settings:
                     _LOGGER.debug("arr_stack approve → updating requestId=%s settings=%s", req_id, server_settings)
-                    async with http.put(
+                    async with adsess.put(
                         f"{base}/api/v1/request/{req_id}",
-                        headers={**hdrs, "Content-Type": "application/json"},
-                        json=server_settings,
-                        ssl=ssl,
+                        headers=csrf_hdrs, cookies=csrf_cookies or None,
+                        json=server_settings, ssl=ssl,
                     ) as r_put:
                         put_status = r_put.status
                         _LOGGER.debug("arr_stack approve → PUT status=%s", put_status)
                 # Step 2: approve
-                async with http.post(
+                async with adsess.post(
                     f"{base}/api/v1/request/{req_id}/approve",
-                    headers={**hdrs, "Content-Type": "application/json"},
-                    json={},
-                    ssl=ssl,
+                    headers=csrf_hdrs, cookies=csrf_cookies or None,
+                    json={}, ssl=ssl,
                 ) as r:
                     resp_body = await r.read()
                     _LOGGER.debug("arr_stack approve ← status=%s body=%s", r.status, resp_body[:300])
@@ -1383,9 +1467,11 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "decline" and method == "POST":
                 body = await request.json()
                 req_id = body.get("requestId")
-                async with http.post(
+                adsess = await self._seerr_admin_sess()
+                csrf_hdrs, csrf_cookies = await self._seerr_csrf_hdrs(base, cfg.get(CONF_SEERR_KEY, ""), ssl)
+                async with adsess.post(
                     f"{base}/api/v1/request/{req_id}/decline",
-                    headers=hdrs,
+                    headers=csrf_hdrs, cookies=csrf_cookies or None,
                     ssl=ssl,
                 ) as r:
                     return web.Response(
@@ -1410,20 +1496,24 @@ class ArrStackProxyView(HomeAssistantView):
                 # Rodinný účet — použij session cookie místo admin API klíče
                 if user_mode == "family" and self._cfg.get(CONF_SEERR_FAMILY_EMAIL):
                     fs = await self._seerr_family_sess(ssl=ssl)
+                    fam_hdrs = {"Accept": "application/json", "Content-Type": "application/json"}
+                    csrf_xtra, csrf_ck = self._csrf_from_jar(fs)
+                    fam_hdrs.update(csrf_xtra)
                     async with fs.post(
                         f"{base}/api/v1/request",
-                        json=body,
-                        headers={"Accept": "application/json", "Content-Type": "application/json"},
-                        ssl=ssl,
+                        json=body, headers=fam_hdrs,
+                        cookies=csrf_ck or None, ssl=ssl,
                     ) as r:
-                        if r.status == 401:
-                            # Session vypršela — znovu se přihlásit a zkusit
+                        if r.status in (401, 403):
+                            # Session vypršela nebo CSRF mismatch — znovu přihlásit a zkusit
                             await self._seerr_family_login(fs, ssl=ssl)
+                            csrf_xtra2, csrf_ck2 = self._csrf_from_jar(fs)
+                            fam_hdrs2 = {"Accept": "application/json", "Content-Type": "application/json"}
+                            fam_hdrs2.update(csrf_xtra2)
                             async with fs.post(
                                 f"{base}/api/v1/request",
-                                json=body,
-                                headers={"Accept": "application/json", "Content-Type": "application/json"},
-                                ssl=ssl,
+                                json=body, headers=fam_hdrs2,
+                                cookies=csrf_ck2 or None, ssl=ssl,
                             ) as r2:
                                 return web.Response(
                                     body=await r2.read(),
@@ -1437,11 +1527,12 @@ class ArrStackProxyView(HomeAssistantView):
                         )
 
                 # Admin — použij API klíč (auto-approve)
-                async with http.post(
+                adsess = await self._seerr_admin_sess()
+                csrf_hdrs, csrf_cookies = await self._seerr_csrf_hdrs(base, cfg.get(CONF_SEERR_KEY, ""), ssl)
+                async with adsess.post(
                     f"{base}/api/v1/request",
-                    headers={**hdrs, "Content-Type": "application/json"},
-                    json=body,
-                    ssl=ssl,
+                    headers=csrf_hdrs, cookies=csrf_cookies or None,
+                    json=body, ssl=ssl,
                 ) as r:
                     return web.Response(
                         body=await r.read(),

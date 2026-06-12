@@ -299,24 +299,45 @@ async def _test_overseerr_family(
 ) -> str | None:
     if not email or not password:
         return None
+    base = url.rstrip("/")
+    login_url = f"{base}/api/v1/auth/local"
+    payload = {"email": email, "password": password}
+    timeout = aiohttp.ClientTimeout(total=8)
     try:
-        async with session.post(
-            f"{url.rstrip('/')}/api/v1/auth/local",
-            json={"email": email, "password": password},
-            headers={"Accept": "application/json"},
-            timeout=aiohttp.ClientTimeout(total=8),
-            ssl=ssl,
-        ) as r:
-            if r.status in (401, 403):
-                return "seerr_family_bad_credentials"
-            if r.status != 200:
-                return "seerr_family_login_failed"
-            data = await r.json()
-            if data.get("permissions", 0) & 2:
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.CookieJar(unsafe=True),
+            timeout=timeout,
+        ) as sess:
+            hdrs = {"Accept": "application/json", "Content-Type": "application/json"}
+            # GET first to get CSRF cookies — Overseerr double-submit cookie pattern
+            _csrf_value = None
+            async with sess.get(f"{base}/api/v1/auth/me", ssl=ssl) as _:
+                pass
+            csrf_token = None
+            for c in sess.cookie_jar:
+                if c.key == "XSRF-TOKEN":
+                    csrf_token = c.value
+                if c.key == "_csrf":
+                    _csrf_value = c.value
+            # Explicitly pass cookies — aiohttp may not resend Secure-flagged cookies over http
+            req_cookies = {}
+            if csrf_token:
+                hdrs["X-XSRF-TOKEN"] = csrf_token
+                req_cookies["XSRF-TOKEN"] = csrf_token
+            if _csrf_value:
+                req_cookies["_csrf"] = _csrf_value
+            async with sess.post(login_url, json=payload, headers=hdrs,
+                                 cookies=req_cookies if req_cookies else None, ssl=ssl) as r:
+                if r.status in (401, 403):
+                    return "seerr_family_bad_credentials"
+                if r.status != 200:
+                    return "seerr_family_login_failed"
+                body = await r.json()
+            if body.get("permissions", 0) & 2:
                 return "seerr_family_is_admin"
             return None
     except Exception as e:
-        return _map_exc(e)
+        return _log_exc("overseerr_family", login_url, e)
 
 
 async def _test_tautulli(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
