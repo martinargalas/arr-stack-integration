@@ -18,6 +18,7 @@ from .const import (
     CONF_SAB_URL, CONF_SAB_KEY,
     CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS,
     CONF_DELUGE_URL, CONF_DELUGE_PASS,
+    CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS,
     CONF_RADARR_URL, CONF_RADARR_KEY,
     CONF_RADARR2_URL, CONF_RADARR2_KEY,
     CONF_SONARR_URL, CONF_SONARR_KEY,
@@ -241,6 +242,34 @@ async def _test_deluge(session: aiohttp.ClientSession, url: str, password: str, 
         return _log_exc("deluge", rpc_url, e)
 
 
+async def _test_rtorrent(session: aiohttp.ClientSession, url: str, user: str, password: str, ssl=None) -> str | None:
+    if not url:
+        return None
+    if err := _url_error(url):
+        return err
+    import xmlrpc.client as xmlrpc
+    rpc_url = f"{url.rstrip('/')}/RPC2"
+    _LOGGER.debug("arr_stack [rtorrent] testing connection → %s", rpc_url)
+    try:
+        body = xmlrpc.dumps((), "system.listMethods")
+        auth = aiohttp.BasicAuth(user, password) if user else None
+        async with session.post(
+            rpc_url,
+            data=body,
+            headers={"Content-Type": "text/xml"},
+            auth=auth,
+            timeout=aiohttp.ClientTimeout(total=8),
+            ssl=ssl,
+        ) as r:
+            if r.status == 401:
+                return "invalid_auth"
+            if r.status not in (200, 201):
+                return "cannot_connect"
+            return None
+    except Exception as e:
+        return _log_exc("rtorrent", rpc_url, e)
+
+
 async def _test_arr(session: aiohttp.ClientSession, url: str, key: str, name: str, ssl=None) -> str | None:
     if err := _url_error(url):
         return err
@@ -417,7 +446,7 @@ async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str, ssl=N
 # ── Config Flow ──────────────────────────────────────────────────────────────
 
 # All configurable step groups in order
-_ALL_STEPS = ['media', 'downloads', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr']
+_ALL_STEPS = ['media', 'torrents', 'usenet', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr']
 
 
 class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -471,7 +500,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_service_selection(self, user_input=None):
         if user_input is not None:
             # media is always included — mandatory
-            optional_steps = ['downloads', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr']
+            optional_steps = ['torrents', 'usenet', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr']
             selected = ['media'] + [s for s in optional_steps if user_input.get(f'enable_{s}', False)]
             # preserve order from _ALL_STEPS
             self._step_queue = [s for s in _ALL_STEPS if s in selected]
@@ -480,7 +509,8 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Derive defaults from existing data
         d = self._data
         schema = vol.Schema({
-            vol.Optional('enable_downloads', default=bool(d.get(CONF_QBIT_URL) or d.get(CONF_SAB_URL) or d.get(CONF_NZBGET_URL) or d.get(CONF_DELUGE_URL))): bool,
+            vol.Optional('enable_torrents',  default=bool(d.get(CONF_QBIT_URL) or d.get(CONF_DELUGE_URL) or d.get(CONF_RTORRENT_URL))): bool,
+            vol.Optional('enable_usenet',    default=bool(d.get(CONF_SAB_URL) or d.get(CONF_NZBGET_URL))): bool,
             vol.Optional('enable_quality',   default=bool(d.get(CONF_RADARR2_URL) or d.get(CONF_SONARR2_URL))): bool,
             vol.Optional('enable_bazarr',    default=bool(d.get(CONF_BAZARR_URL))): bool,
             vol.Optional('enable_discovery', default=bool(d.get(CONF_SEERR_URL))): bool,
@@ -496,9 +526,9 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=False,
         )
 
-    # ── Downloads: qBittorrent + SABnzbd ─────────────────────────────────────
+    # ── Torrent clients: qBittorrent + Deluge + rTorrent ─────────────────────
 
-    async def async_step_downloads(self, user_input=None):
+    async def async_step_torrents(self, user_input=None):
         errors = {}
         ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
@@ -516,14 +546,75 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_QBIT_URL] = err
 
             if not errors:
-                err = await _test_sabnzbd(
+                err = await _test_deluge(
                     session,
-                    user_input.get(CONF_SAB_URL, ""),
-                    user_input.get(CONF_SAB_KEY, ""),
+                    user_input.get(CONF_DELUGE_URL, ""),
+                    user_input.get(CONF_DELUGE_PASS, ""),
                     ssl=ssl,
                 )
                 if err:
-                    errors[CONF_SAB_URL] = err
+                    errors[CONF_DELUGE_URL] = err
+
+            if not errors:
+                err = await _test_rtorrent(
+                    session,
+                    user_input.get(CONF_RTORRENT_URL, ""),
+                    user_input.get(CONF_RTORRENT_USER, ""),
+                    user_input.get(CONF_RTORRENT_PASS, ""),
+                    ssl=ssl,
+                )
+                if err:
+                    errors[CONF_RTORRENT_URL] = err
+
+            if not errors:
+                for key in [CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
+                             CONF_DELUGE_URL, CONF_DELUGE_PASS,
+                             CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS]:
+                    self._data[key] = user_input.get(key, "")
+                return await self._next_step()
+
+        schema = vol.Schema({
+            vol.Optional(CONF_QBIT_URL):      str,
+            vol.Optional(CONF_QBIT_USER):     str,
+            vol.Optional(CONF_QBIT_PASS):     str,
+            vol.Optional(CONF_DELUGE_URL):    str,
+            vol.Optional(CONF_DELUGE_PASS):   str,
+            vol.Optional(CONF_RTORRENT_URL):  str,
+            vol.Optional(CONF_RTORRENT_USER): str,
+            vol.Optional(CONF_RTORRENT_PASS): str,
+        })
+        suggested = self._data if self._data else {
+            CONF_QBIT_URL:      "http://192.168.1.x:8081",
+            CONF_QBIT_USER:     "admin",
+            CONF_DELUGE_URL:    "http://192.168.1.x:8112",
+            CONF_RTORRENT_URL:  "http://192.168.1.x:9080",
+            CONF_RTORRENT_USER: "",
+        }
+        schema = self.add_suggested_values_to_schema(schema, suggested)
+        return self.async_show_form(
+            step_id="torrents",
+            data_schema=schema,
+            errors=errors,
+            last_step=len(self._step_queue) == 0,
+        )
+
+    # ── Usenet clients: SABnzbd + NZBGet ─────────────────────────────────────
+
+    async def async_step_usenet(self, user_input=None):
+        errors = {}
+        ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
+
+        if user_input is not None:
+            session = async_get_clientsession(self.hass)
+
+            err = await _test_sabnzbd(
+                session,
+                user_input.get(CONF_SAB_URL, ""),
+                user_input.get(CONF_SAB_KEY, ""),
+                ssl=ssl,
+            )
+            if err:
+                errors[CONF_SAB_URL] = err
 
             if not errors:
                 err = await _test_nzbget(
@@ -537,45 +628,25 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors[CONF_NZBGET_URL] = err
 
             if not errors:
-                err = await _test_deluge(
-                    session,
-                    user_input.get(CONF_DELUGE_URL, ""),
-                    user_input.get(CONF_DELUGE_PASS, ""),
-                    ssl=ssl,
-                )
-                if err:
-                    errors[CONF_DELUGE_URL] = err
-
-            if not errors:
-                for key in [CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
-                             CONF_SAB_URL, CONF_SAB_KEY,
-                             CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS,
-                             CONF_DELUGE_URL, CONF_DELUGE_PASS]:
+                for key in [CONF_SAB_URL, CONF_SAB_KEY,
+                             CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS]:
                     self._data[key] = user_input.get(key, "")
                 return await self._next_step()
 
         schema = vol.Schema({
-            vol.Optional(CONF_QBIT_URL):     str,
-            vol.Optional(CONF_QBIT_USER):    str,
-            vol.Optional(CONF_QBIT_PASS):    str,
             vol.Optional(CONF_SAB_URL):      str,
             vol.Optional(CONF_SAB_KEY):      str,
             vol.Optional(CONF_NZBGET_URL):   str,
             vol.Optional(CONF_NZBGET_USER):  str,
             vol.Optional(CONF_NZBGET_PASS):  str,
-            vol.Optional(CONF_DELUGE_URL):   str,
-            vol.Optional(CONF_DELUGE_PASS):  str,
         })
         suggested = self._data if self._data else {
-            CONF_QBIT_URL:   "http://192.168.1.x:8080",
-            CONF_QBIT_USER:  "admin",
-            CONF_SAB_URL:    "http://192.168.1.x:8080",
+            CONF_SAB_URL:    "http://192.168.1.x:8089",
             CONF_NZBGET_URL: "http://192.168.1.x:6789",
-            CONF_DELUGE_URL: "http://192.168.1.x:8112",
         }
         schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(
-            step_id="downloads",
+            step_id="usenet",
             data_schema=schema,
             errors=errors,
             last_step=len(self._step_queue) == 0,

@@ -14,6 +14,10 @@ CONF_NZBGET_PASS = "nzbget_password"
 CONF_DELUGE_URL  = "deluge_url"
 CONF_DELUGE_PASS = "deluge_password"
 
+CONF_RTORRENT_URL  = "rtorrent_url"
+CONF_RTORRENT_USER = "rtorrent_user"
+CONF_RTORRENT_PASS = "rtorrent_password"
+
 CONF_RADARR_URL = "radarr_url"
 CONF_RADARR_KEY = "radarr_api_key"
 

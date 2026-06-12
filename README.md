@@ -30,6 +30,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Sonarr 2 | Second Sonarr instance (e.g. 4K) | Optional |
 | qBittorrent | Torrent download client | Optional |
 | Deluge | Torrent download client | Optional |
+| rTorrent / ruTorrent | Torrent download client | Optional |
 | SABnzbd | Usenet download client | Optional |
 | NZBGet | Usenet download client | Optional |
 | Overseerr / Jellyseerr | Media discovery & requests | Optional |
@@ -80,7 +81,8 @@ Choose which optional services you want to configure. Only the selected steps wi
 
 | Toggle | Services configured |
 |--------|-------------------|
-| Downloads | qBittorrent, Deluge, SABnzbd, NZBGet |
+| Torrent clients | qBittorrent, Deluge, rTorrent |
+| Usenet clients | SABnzbd, NZBGet |
 | 2nd instances | Radarr 2, Sonarr 2 |
 | Bazarr | Bazarr |
 | Discovery | Overseerr / Jellyseerr |
@@ -102,7 +104,7 @@ Choose which optional services you want to configure. Only the selected steps wi
 
 ---
 
-### Downloads — qBittorrent + Deluge + SABnzbd + NZBGet *(optional)*
+### Torrent clients — qBittorrent + Deluge + rTorrent *(optional)*
 
 | Field | Example |
 |-------|---------|
@@ -111,6 +113,18 @@ Choose which optional services you want to configure. Only the selected steps wi
 | qBittorrent password | `••••` |
 | Deluge URL | `http://192.168.1.10:8112` |
 | Deluge password | Your Deluge Web UI password |
+| rTorrent URL | `http://192.168.1.10:9080` — base URL of ruTorrent |
+| rTorrent username | HTTP Basic auth username (if configured) |
+| rTorrent password | HTTP Basic auth password |
+
+Leave any field empty to skip that service individually.
+
+---
+
+### Usenet clients — SABnzbd + NZBGet *(optional)*
+
+| Field | Example |
+|-------|---------|
 | SABnzbd URL | `http://192.168.1.10:8080` |
 | SABnzbd API key | Find in SABnzbd → Config → General |
 | NZBGet URL | `http://192.168.1.10:6789` |

@@ -3,6 +3,7 @@ import asyncio
 import base64
 import itertools
 import logging
+import xmlrpc.client as _xmlrpc
 from urllib.parse import quote
 import aiohttp
 from aiohttp import web
@@ -19,6 +20,7 @@ from .const import (
     CONF_SAB_URL, CONF_SAB_KEY,
     CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS,
     CONF_DELUGE_URL, CONF_DELUGE_PASS,
+    CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS,
     CONF_RADARR_URL, CONF_RADARR_KEY,
     CONF_RADARR2_URL, CONF_RADARR2_KEY,
     CONF_SONARR_URL, CONF_SONARR_KEY,
@@ -277,6 +279,7 @@ class ArrStackProxyView(HomeAssistantView):
                 "sabnzbd":    bool(cfg.get(CONF_SAB_URL)),
                 "nzbget":     bool(cfg.get(CONF_NZBGET_URL)),
                 "deluge":     bool(cfg.get(CONF_DELUGE_URL)),
+                "rtorrent":   bool(cfg.get(CONF_RTORRENT_URL)),
                 "radarr2":    bool(cfg.get(CONF_RADARR2_URL)),
                 "sonarr2":    bool(cfg.get(CONF_SONARR2_URL)),
                 "bazarr":     bool(cfg.get(CONF_BAZARR_URL)),
@@ -507,6 +510,110 @@ class ArrStackProxyView(HomeAssistantView):
                     else:
                         return web.json_response({"error": "unknown mode"}, status=400)
                     return web.json_response({"ok": True})
+
+        # ════════════════════════════════════════════
+        # rTorrent (via ruTorrent XMLRPC)
+        # ════════════════════════════════════════════
+        elif service == "rtorrent":
+            base = cfg.get(CONF_RTORRENT_URL, "").rstrip("/")
+            if not base:
+                return web.json_response({"error": "rTorrent not configured"}, status=503)
+            rpc_url = f"{base}/RPC2"
+            user    = cfg.get(CONF_RTORRENT_USER, "") or ""
+            passwd  = cfg.get(CONF_RTORRENT_PASS, "") or ""
+            auth    = aiohttp.BasicAuth(user, passwd) if user else None
+
+            async def _rpc(method, params=()):
+                body = _xmlrpc.dumps(tuple(params), method)
+                async with aiohttp.ClientSession() as s:
+                    async with s.post(
+                        rpc_url,
+                        data=body,
+                        headers={"Content-Type": "text/xml"},
+                        auth=auth,
+                        ssl=ssl,
+                        timeout=aiohttp.ClientTimeout(total=15),
+                    ) as r:
+                        raw = await r.read()
+                        return _xmlrpc.loads(raw)[0][0]
+
+            if path == "queue":
+                fields = [
+                    "d.hash=", "d.name=", "d.size_bytes=", "d.completed_bytes=",
+                    "d.down.rate=", "d.up.rate=", "d.is_active=", "d.is_open=",
+                    "d.is_hash_checking=", "d.message=", "d.peers_connected=",
+                    "d.peers_not_connected=",
+                ]
+                rows = await _rpc("d.multicall2", ["", "main"] + fields)
+                torrents = []
+                for row in rows:
+                    h, name, size, done, dl, ul, active, is_open, checking, message, peers_c, peers_nc = row
+                    pct = round(done * 100 / size) if size > 0 else 0
+                    remaining = (size - done)
+                    eta = int(remaining / dl) if dl > 0 else 0
+                    if checking:
+                        state = "Checking"
+                    elif message and not active:
+                        state = "Error"
+                    elif not is_open or (not active and not checking):
+                        state = "Paused"
+                    elif done >= size and size > 0:
+                        state = "Seeding"
+                    else:
+                        state = "Downloading"
+                    torrents.append({
+                        "hash":                 h,
+                        "name":                 name,
+                        "progress":             pct,
+                        "download_payload_rate": dl,
+                        "upload_payload_rate":   ul,
+                        "total_size":            size,
+                        "total_done":            done,
+                        "eta":                   eta,
+                        "num_peers":             peers_c + peers_nc,
+                        "num_seeds":             peers_c,
+                        "state":                 state,
+                        "message":               message,
+                    })
+                return web.json_response(torrents)
+
+            elif path == "status":
+                result = await _rpc("system.multicall", [[
+                    {"methodName": "throttle.global_down.rate", "params": []},
+                    {"methodName": "throttle.global_up.rate",   "params": []},
+                ]])
+                dl_rate = result[0][0] if result else 0
+                ul_rate = result[1][0] if len(result) > 1 else 0
+                return web.json_response({
+                    "download_rate": dl_rate,
+                    "upload_rate":   ul_rate,
+                    "free_space":    0,
+                })
+
+            elif path == "action":
+                body_data = await request.json()
+                mode      = body_data.get("action", "")
+                hash_id   = body_data.get("id", "")
+                if mode == "global_pause":
+                    rows = await _rpc("d.multicall2", ["", "main", "d.hash="])
+                    for (h,) in rows:
+                        await _rpc("d.pause", [h])
+                elif mode == "global_resume":
+                    rows = await _rpc("d.multicall2", ["", "main", "d.hash="])
+                    for (h,) in rows:
+                        await _rpc("d.resume", [h])
+                elif mode == "pause" and hash_id:
+                    await _rpc("d.pause", [hash_id])
+                elif mode == "resume" and hash_id:
+                    await _rpc("d.resume", [hash_id])
+                elif mode == "delete" and hash_id:
+                    await _rpc("d.erase", [hash_id])
+                elif mode == "delete_files" and hash_id:
+                    await _rpc("d.delete_tied", [hash_id])
+                    await _rpc("d.erase", [hash_id])
+                else:
+                    return web.json_response({"error": "unknown mode"}, status=400)
+                return web.json_response({"ok": True})
 
         # ════════════════════════════════════════════
         # Radarr
