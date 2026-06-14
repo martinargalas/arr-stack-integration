@@ -48,6 +48,8 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Prowlarr | Indexer management and search statistics | Optional |
 | Trakt | Personalised movie & show recommendations | Optional |
 
+> **Note:** Plex, Jellyfin, and Kodi also require their official Home Assistant integrations to be installed and connected — [Plex](https://www.home-assistant.io/integrations/plex/), [Jellyfin](https://www.home-assistant.io/integrations/jellyfin/), [Kodi](https://www.home-assistant.io/integrations/kodi/). The card uses these HA integrations for live stream detection. Emby does not have an official HA integration — configure it directly in Arr Stack instead.
+
 ---
 
 ## Installation
