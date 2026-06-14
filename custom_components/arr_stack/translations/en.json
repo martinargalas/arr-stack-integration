@@ -20,7 +20,7 @@
           "enable_quality":   "2nd instances / Radarr 2 / Sonarr 2",
           "enable_bazarr":    "Bazarr",
           "enable_discovery": "Discovery / Overseerr / Jellyseerr",
-          "enable_plex":      "Plex (playback control)",
+          "enable_plex":      "Plex (playback control) / Emby",
           "enable_jellyfin":  "Streaming stats / Tautulli / Jellystat",
           "enable_trakt":     "Trakt (personalised recommendations)",
           "enable_prowlarr":  "Prowlarr (indexer management)"
@@ -129,15 +129,26 @@
         }
       },
       "plex": {
-        "title": "Arr Stack — Plex",
+        "title": "Arr Stack — Plex / Emby",
         "description": "**Plex** — Optional, enables playback control.\n\n{plex_section}",
         "data": {
+          "skip_plex": "Plex setup",
           "plex_server_url": "Plex Server URL (optional override)",
-          "skip_plex": "Skip Plex setup"
+          "emby_url": "Emby URL (optional)",
+          "emby_api_key": "Emby API key (optional)"
         },
         "data_description": {
           "plex_server_url": "Leave empty to auto-detect. Fill in only if auto-detection picks the wrong address — e.g. when HA runs on a different machine or VLAN than Plex.",
-          "skip_plex": "Or check Skip Plex setup below to skip."
+          "emby_url": "e.g. http://192.168.1.10:8096",
+          "emby_api_key": "Dashboard → Advanced → API Keys"
+        },
+        "selector": {
+          "skip_plex": {
+            "options": {
+              "setup": "Set up Plex",
+              "skip": "Skip Plex"
+            }
+          }
         }
       },
       "jellyfin": {

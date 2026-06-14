@@ -36,6 +36,9 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Overseerr / Jellyseerr | Media discovery & requests | Optional |
 | Bazarr | Subtitle management | Optional |
 | Plex | Stream monitoring & playback control | Optional |
+| Jellyfin | Stream monitoring (via HA integration — no config needed here) | Optional |
+| Emby | Stream monitoring & playback control | Optional |
+| Kodi | Stream monitoring & playback control (via HA integration — no config needed here) | Optional |
 | Tautulli | Watch history, statistics & account sharing detection | Optional |
 | Jellystat | Watch history and statistics | Optional |
 | Prowlarr | Indexer management and search statistics | Optional |
@@ -86,7 +89,7 @@ Choose which optional services you want to configure. Only the selected steps wi
 | 2nd instances | Radarr 2, Sonarr 2 |
 | Bazarr | Bazarr |
 | Discovery | Overseerr / Jellyseerr |
-| Plex | Plex |
+| Plex / Emby | Plex, Emby |
 | Streaming stats | Tautulli, Jellystat |
 | Prowlarr | Prowlarr |
 | Trakt | Trakt |
@@ -170,15 +173,24 @@ Trending, popular, and upcoming sections are always available without Overseerr.
 
 ---
 
-### Plex *(optional)*
+### Plex / Emby *(optional)*
 
-Authenticate via the Plex login link shown during setup. This enables stream monitoring, active user display, and playback control.
+**Plex** — authenticate via the Plex login link shown during setup. This enables stream monitoring, active user display, and playback control.
 
 | Field | Notes |
 |-------|-------|
 | Plex Server URL | Leave empty to auto-detect. Fill in if HA runs on a different machine or VLAN than Plex — e.g. `http://192.168.1.10:32400`. |
 
 > **Note:** Plex Now Playing in the card also requires the official [Plex integration](https://www.home-assistant.io/integrations/plex/) installed in HA.
+
+**Emby** — enter your Emby server URL and API key to enable stream monitoring and remote stop with a message.
+
+| Field | Notes |
+|-------|-------|
+| Emby URL | `http://192.168.1.10:8096` |
+| Emby API key | Find in Emby → Dashboard → API Keys → New API Key |
+
+> **Jellyfin and Kodi** do not require any configuration here. Install the official [Jellyfin](https://www.home-assistant.io/integrations/jellyfin/) or [Kodi](https://www.home-assistant.io/integrations/kodi/) HA integration and the card picks them up automatically.
 
 ---
 

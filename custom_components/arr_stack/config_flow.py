@@ -27,6 +27,7 @@ from .const import (
     CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS,
     CONF_BAZARR_URL, CONF_BAZARR_KEY,
     CONF_PLEX_TOKEN, CONF_PLEX_URL, PLEX_CLIENT_ID,
+    CONF_EMBY_URL, CONF_EMBY_KEY,
     CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
     CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY,
     CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET,
@@ -514,7 +515,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional('enable_quality',   default=bool(d.get(CONF_RADARR2_URL) or d.get(CONF_SONARR2_URL))): bool,
             vol.Optional('enable_bazarr',    default=bool(d.get(CONF_BAZARR_URL))): bool,
             vol.Optional('enable_discovery', default=bool(d.get(CONF_SEERR_URL))): bool,
-            vol.Optional('enable_plex',      default=bool(d.get(CONF_PLEX_TOKEN))): bool,
+            vol.Optional('enable_plex',      default=bool(d.get(CONF_PLEX_TOKEN) or d.get(CONF_EMBY_URL))): bool,
             vol.Optional('enable_jellyfin',  default=bool(d.get(CONF_TAUTULLI_URL) or d.get(CONF_JELLYSTAT_URL))): bool,
             vol.Optional('enable_trakt',     default=bool(d.get(CONF_TRAKT_CLIENT_ID))): bool,
             vol.Optional('enable_prowlarr',  default=bool(d.get(CONF_PROWLARR_URL))): bool,
@@ -828,9 +829,14 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
-            if user_input.get("skip_plex"):
-                self._data[CONF_PLEX_TOKEN] = ""
-                self._data[CONF_PLEX_URL]   = ""
+            # Save Emby regardless of Plex skip
+            self._data[CONF_EMBY_URL] = (user_input.get(CONF_EMBY_URL) or "").strip().rstrip("/")
+            self._data[CONF_EMBY_KEY] = (user_input.get(CONF_EMBY_KEY) or "").strip()
+
+            if user_input.get("skip_plex") == "skip":
+                # Preserve existing token if already configured
+                if not self._data.get(CONF_PLEX_TOKEN):
+                    self._data[CONF_PLEX_URL] = ""
                 return await self._next_step()
 
             manual_url = (user_input.get("plex_server_url") or "").strip().rstrip("/")
@@ -869,12 +875,24 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             f"3. Return here and click **Submit**"
         )
 
+        from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
+        skip_default = "skip" if self._data.get(CONF_PLEX_TOKEN) else "setup"
         schema = vol.Schema({
+            vol.Optional("skip_plex", default=skip_default): SelectSelector(
+                SelectSelectorConfig(
+                    options=["setup", "skip"],
+                    translation_key="skip_plex",
+                    mode=SelectSelectorMode.LIST,
+                )
+            ),
             vol.Optional("plex_server_url"): str,
-            vol.Optional("skip_plex", default=False): bool,
+            vol.Optional(CONF_EMBY_URL): str,
+            vol.Optional(CONF_EMBY_KEY): str,
         })
         schema = self.add_suggested_values_to_schema(schema, {
             "plex_server_url": self._data.get(CONF_PLEX_URL, ""),
+            CONF_EMBY_URL: self._data.get(CONF_EMBY_URL, ""),
+            CONF_EMBY_KEY: self._data.get(CONF_EMBY_KEY, ""),
         })
         return self.async_show_form(
             step_id="plex",

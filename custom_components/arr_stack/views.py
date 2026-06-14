@@ -29,6 +29,7 @@ from .const import (
     CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS,
     CONF_BAZARR_URL, CONF_BAZARR_KEY,
     CONF_PLEX_TOKEN, CONF_PLEX_URL, PLEX_CLIENT_ID,
+    CONF_EMBY_URL, CONF_EMBY_KEY,
     CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
     CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY,
     CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET,
@@ -2061,9 +2062,17 @@ class ArrStackProxyView(HomeAssistantView):
                 ) as r:
                     return web.json_response(_tmdb_page(await r.json()))
 
+            def _tmdb_cast(d):
+                cast = (d.get("credits") or {}).get("cast") or []
+                return {"cast": [{
+                    "name":        c.get("name", ""),
+                    "character":   c.get("character", ""),
+                    "profilePath": c.get("profile_path"),
+                } for c in cast[:24]]}
+
             if path.startswith("movie/") and method == "GET":
                 movie_id = path[6:]
-                async with http.get(f"{_TMDB_BASE}/movie/{movie_id}", params=base_params, timeout=timeout) as r:
+                async with http.get(f"{_TMDB_BASE}/movie/{movie_id}", params={**base_params, "append_to_response": "credits"}, timeout=timeout) as r:
                     d = await r.json()
                 async with http.get(f"{_TMDB_BASE}/movie/{movie_id}/videos", params=base_params, timeout=timeout) as r:
                     v = await r.json()
@@ -2078,12 +2087,13 @@ class ArrStackProxyView(HomeAssistantView):
                     "releaseDate":     d.get("release_date", ""),
                     "voteAverage":     d.get("vote_average", 0),
                     "genres":          [{"name": g["name"]} for g in d.get("genres", [])],
+                    "credits":         _tmdb_cast(d),
                     "youTubeTrailerId": trailer["key"] if trailer else None,
                 })
 
             if path.startswith("tv/") and method == "GET":
                 tv_id = path[3:]
-                async with http.get(f"{_TMDB_BASE}/tv/{tv_id}", params=base_params, timeout=timeout) as r:
+                async with http.get(f"{_TMDB_BASE}/tv/{tv_id}", params={**base_params, "append_to_response": "credits"}, timeout=timeout) as r:
                     d = await r.json()
                 async with http.get(f"{_TMDB_BASE}/tv/{tv_id}/videos", params=base_params, timeout=timeout) as r:
                     v = await r.json()
@@ -2098,6 +2108,8 @@ class ArrStackProxyView(HomeAssistantView):
                     "firstAirDate":    d.get("first_air_date", ""),
                     "voteAverage":     d.get("vote_average", 0),
                     "genres":          [{"name": g["name"]} for g in d.get("genres", [])],
+                    "numberOfSeasons": d.get("number_of_seasons", 0),
+                    "credits":         _tmdb_cast(d),
                     "youTubeTrailerId": trailer["key"] if trailer else None,
                 })
 
@@ -2376,6 +2388,180 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "categories" and method == "GET":
                 async with http.get(f"{base}/api/v1/indexer/categories", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+        elif service == "jellyfin":
+            try:
+                jf_entries = self._hass.config_entries.async_entries("jellyfin")
+                if not jf_entries:
+                    return web.json_response({"_notConfigured": True})
+                entry = jf_entries[0]
+                server_url = (entry.data.get("url") or "").rstrip("/")
+                # Token not in entry.data — extract from api_client (JellyfinClient)
+                api_token = ""
+                runtime = getattr(entry, "runtime_data", None)
+                if runtime is not None:
+                    client = getattr(runtime, "api_client", None)
+                    if client is not None:
+                        try:
+                            cfg = getattr(client, "config", None)
+                            if cfg:
+                                d = getattr(cfg, "data", {})
+                                api_token = d.get("auth.token") or d.get("auth-token") or ""
+                            if not api_token:
+                                creds = getattr(getattr(client, "auth", None), "credentials", None)
+                                if creds:
+                                    servers = creds.get_credentials().get("Servers", [])
+                                    if servers:
+                                        api_token = servers[0].get("AccessToken", "")
+                        except Exception:
+                            pass
+                # coordinator stored in entry.runtime_data (HA 2024+ pattern)
+                sessions = []
+                if runtime is not None:
+                    raw = getattr(runtime, "data", None)
+                    if raw is not None:
+                        if hasattr(raw, "sessions"):
+                            s = raw.sessions
+                            sessions = list(s.values()) if isinstance(s, dict) else list(s or [])
+                        elif isinstance(raw, dict):
+                            if "sessions" in raw:
+                                sessions = raw["sessions"]
+                            else:
+                                vals = list(raw.values())
+                                if vals and isinstance(vals[0], dict):
+                                    sessions = vals
+
+                if path == "sessions":
+                    active = [s for s in sessions if s.get("NowPlayingItem")]
+                    return web.json_response({"sessions": active, "server_url": server_url, "api_token": api_token})
+                if path == "stop":
+                    body = {}
+                    try:
+                        body = await request.json()
+                    except Exception:
+                        pass
+                    session_id = body.get("session_id", "")
+                    message    = (body.get("message") or "").strip()
+                    if not session_id:
+                        return web.json_response({"error": "missing session_id"}, status=400)
+                    async with aiohttp.ClientSession() as session_http:
+                        headers = {"X-Emby-Token": api_token, "Content-Type": "application/json"} if api_token else {"Content-Type": "application/json"}
+                        import json as _json
+                        if message:
+                            msg_url = f"{server_url}/Sessions/{session_id}/Message"
+                            msg_body = _json.dumps({"Header": "Upozornění", "Text": message, "TimeoutMs": 5000})
+                            async with session_http.post(msg_url, headers=headers, data=msg_body, timeout=aiohttp.ClientTimeout(total=5)):
+                                pass
+                        stop_url = f"{server_url}/Sessions/{session_id}/Playing/Stop"
+                        async with session_http.post(stop_url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            return web.json_response({"ok": resp.status < 300}, status=200)
+            except Exception as exc:
+                _LOGGER.warning("arr_stack jellyfin sessions error: %s", exc)
+                return web.json_response({"error": str(exc)}, status=502)
+
+        elif service == "kodi":
+            kodi_entries = self._hass.config_entries.async_entries("kodi")
+            kodi_entry   = kodi_entries[0] if kodi_entries else None
+            kodi_host    = (kodi_entry.data.get("host") or "") if kodi_entry else ""
+            kodi_port    = kodi_entry.data.get("http_port") or kodi_entry.data.get("port") or 8080 if kodi_entry else 8080
+            kodi_user    = (kodi_entry.data.get("username") or "") if kodi_entry else ""
+            kodi_pass    = (kodi_entry.data.get("password") or "") if kodi_entry else ""
+            kodi_url     = f"http://{kodi_host}:{kodi_port}/jsonrpc" if kodi_host else ""
+
+            if path == "sessions":
+                try:
+                    from homeassistant.helpers import entity_registry as er
+                    ent_reg = er.async_get(self._hass)
+                    kodi_ids = [
+                        e.entity_id for e in ent_reg.entities.values()
+                        if e.platform == "kodi" and e.domain == "media_player" and not e.disabled_by
+                    ]
+                    sessions = []
+                    for eid in kodi_ids:
+                        state = self._hass.states.get(eid)
+                        if state and state.state in ("playing", "paused"):
+                            attrs = {}
+                            for k, v in state.attributes.items():
+                                attrs[k] = str(v) if hasattr(v, 'isoformat') else v
+                            sessions.append({
+                                "entity_id": eid,
+                                "state": state.state,
+                                "attributes": attrs,
+                            })
+                    return web.json_response({"sessions": sessions, "known_ids": kodi_ids})
+                except Exception as exc:
+                    _LOGGER.warning("arr_stack kodi sessions error: %s", exc)
+                    return web.json_response({"sessions": []})
+
+            if path == "stop":
+                body = {}
+                try:
+                    body = await request.json()
+                except Exception:
+                    pass
+                entity_id = body.get("entity_id", "")
+                message   = (body.get("message") or "").strip()
+                try:
+                    import json as _json
+                    auth = aiohttp.BasicAuth(kodi_user, kodi_pass) if kodi_user else None
+                    headers = {"Content-Type": "application/json"}
+                    async with aiohttp.ClientSession() as session_http:
+                        if message and kodi_url:
+                            notify_body = _json.dumps({
+                                "jsonrpc": "2.0", "id": 1, "method": "GUI.ShowNotification",
+                                "params": {"title": "Upozornění", "message": message, "displaytime": 5000}
+                            })
+                            async with session_http.post(kodi_url, data=notify_body, headers=headers, auth=auth, timeout=aiohttp.ClientTimeout(total=5)):
+                                pass
+                    # Stop via HA service
+                    if entity_id:
+                        await self._hass.services.async_call(
+                            "media_player", "media_stop", {"entity_id": entity_id}, blocking=False
+                        )
+                    return web.json_response({"ok": True})
+                except Exception as exc:
+                    _LOGGER.warning("arr_stack kodi stop error: %s", exc)
+                    return web.json_response({"ok": False, "error": str(exc)})
+
+        elif service == "emby":
+            try:
+                emby_url = (cfg.get(CONF_EMBY_URL) or "").rstrip("/")
+                emby_key = cfg.get(CONF_EMBY_KEY) or ""
+                if not emby_url or not emby_key:
+                    return web.json_response({"_notConfigured": True})
+                import json as _json
+                if path == "sessions":
+                    async with aiohttp.ClientSession() as session_http:
+                        async with session_http.get(
+                            f"{emby_url}/Sessions?api_key={emby_key}",
+                            timeout=aiohttp.ClientTimeout(total=10)
+                        ) as resp:
+                            data = await resp.json()
+                            active = [s for s in data if s.get("NowPlayingItem")]
+                            return web.json_response({"sessions": active, "server_url": emby_url, "api_token": emby_key})
+                if path == "stop":
+                    body = {}
+                    try:
+                        body = await request.json()
+                    except Exception:
+                        pass
+                    session_id = body.get("session_id", "")
+                    message    = (body.get("message") or "").strip()
+                    if not session_id:
+                        return web.json_response({"error": "missing session_id"}, status=400)
+                    async with aiohttp.ClientSession() as session_http:
+                        headers = {"Content-Type": "application/json"}
+                        if message:
+                            msg_url  = f"{emby_url}/Sessions/{session_id}/Message?api_key={emby_key}"
+                            msg_body = _json.dumps({"Header": "Upozornění", "Text": message, "TimeoutMs": 5000})
+                            async with session_http.post(msg_url, headers=headers, data=msg_body, timeout=aiohttp.ClientTimeout(total=5)):
+                                pass
+                        stop_url = f"{emby_url}/Sessions/{session_id}/Playing/Stop?api_key={emby_key}"
+                        async with session_http.post(stop_url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            return web.json_response({"ok": resp.status < 300}, status=200)
+            except Exception as exc:
+                _LOGGER.warning("arr_stack emby error: %s", exc)
+                return web.json_response({"error": str(exc)}, status=502)
 
         return web.json_response({"error": "unknown service or path"}, status=404)
 
