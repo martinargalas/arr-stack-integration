@@ -40,7 +40,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Overseerr / Jellyseerr | Media discovery & requests | Optional |
 | Bazarr | Subtitle management | Optional |
 | Plex | Stream monitoring & playback control | Optional |
-| Jellyfin | Stream monitoring (via HA integration — no config needed here) | Optional |
+| Jellyfin | Stream monitoring & playback control (via HA integration — no config needed here) | Optional |
 | Emby | Stream monitoring & playback control | Optional |
 | Kodi | Stream monitoring & playback control (via HA integration — no config needed here) | Optional |
 | Tautulli | Watch history, statistics & account sharing detection | Optional |
