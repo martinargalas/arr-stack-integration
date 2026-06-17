@@ -50,6 +50,10 @@ CONF_TAUTULLI_KEY = "tautulli_api_key"
 CONF_JELLYSTAT_URL = "jellystat_url"
 CONF_JELLYSTAT_KEY = "jellystat_api_key"
 
+CONF_TRACEARR_URL           = "tracearr_url"
+CONF_TRACEARR_KEY           = "tracearr_api_key"
+CONF_TRACEARR_REFRESH_TOKEN = "tracearr_refresh_token"
+
 CONF_TRAKT_CLIENT_ID     = "trakt_client_id"
 CONF_TRAKT_CLIENT_SECRET = "trakt_client_secret"
 CONF_TRAKT_ACCESS_TOKEN  = "trakt_access_token"

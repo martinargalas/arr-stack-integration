@@ -30,6 +30,7 @@ from .const import (
     CONF_EMBY_URL, CONF_EMBY_KEY,
     CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
     CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY,
+    CONF_TRACEARR_URL, CONF_TRACEARR_KEY, CONF_TRACEARR_REFRESH_TOKEN,
     CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET,
     CONF_TRAKT_ACCESS_TOKEN, CONF_TRAKT_REFRESH_TOKEN, CONF_TRAKT_EXPIRES_AT,
     TRAKT_API_BASE,
@@ -417,6 +418,27 @@ async def _test_jellystat(session: aiohttp.ClientSession, url: str, key: str, ss
             return "jellystat_error"
     except Exception as e:
         return _log_exc("jellystat", test_url, e)
+
+
+async def _test_tracearr(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
+    if not url:
+        return None
+    if err := _url_error(url):
+        return err
+    test_url = f"{url.rstrip('/')}/api/health"
+    _LOGGER.debug("arr_stack [tracearr] testing connection → %s", test_url)
+    try:
+        async with session.get(
+            test_url,
+            headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=8),
+            ssl=ssl,
+        ) as r:
+            if r.status < 500:
+                return None
+            return "tracearr_error"
+    except Exception as e:
+        return _log_exc("tracearr", test_url, e)
 
 
 async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
@@ -914,6 +936,8 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             tautulli_key  = user_input.get(CONF_TAUTULLI_KEY, "")
             jellystat_url = user_input.get(CONF_JELLYSTAT_URL, "")
             jellystat_key = user_input.get(CONF_JELLYSTAT_KEY, "")
+            tracearr_url  = user_input.get(CONF_TRACEARR_URL, "")
+            tracearr_key  = user_input.get(CONF_TRACEARR_KEY, "")
 
             err = await _test_tautulli(session, tautulli_url, tautulli_key, ssl=ssl)
             if err:
@@ -925,24 +949,38 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors[CONF_JELLYSTAT_URL] = err
 
             if not errors:
+                err = await _test_tracearr(session, tracearr_url, tracearr_key, ssl=ssl)
+                if err:
+                    errors[CONF_TRACEARR_URL] = err
+
+            if not errors:
                 self._data[CONF_TAUTULLI_URL]  = tautulli_url
                 self._data[CONF_TAUTULLI_KEY]  = tautulli_key
                 self._data[CONF_JELLYSTAT_URL] = jellystat_url
                 self._data[CONF_JELLYSTAT_KEY] = jellystat_key
+                self._data[CONF_TRACEARR_URL]           = tracearr_url
+                self._data[CONF_TRACEARR_KEY]           = tracearr_key
+                self._data[CONF_TRACEARR_REFRESH_TOKEN] = user_input.get(CONF_TRACEARR_REFRESH_TOKEN, self._data.get(CONF_TRACEARR_REFRESH_TOKEN, ""))
                 return await self._next_step()
 
         schema = vol.Schema({
-            vol.Optional(CONF_TAUTULLI_URL):  str,
-            vol.Optional(CONF_TAUTULLI_KEY):  str,
-            vol.Optional(CONF_JELLYSTAT_URL): str,
-            vol.Optional(CONF_JELLYSTAT_KEY): str,
+            vol.Optional(CONF_TAUTULLI_URL):          str,
+            vol.Optional(CONF_TAUTULLI_KEY):          str,
+            vol.Optional(CONF_JELLYSTAT_URL):         str,
+            vol.Optional(CONF_JELLYSTAT_KEY):         str,
+            vol.Optional(CONF_TRACEARR_URL):          str,
+            vol.Optional(CONF_TRACEARR_KEY):          str,
+            vol.Optional(CONF_TRACEARR_REFRESH_TOKEN): str,
         })
         ui = user_input or {}
         suggested = {
-            CONF_TAUTULLI_URL:  ui.get(CONF_TAUTULLI_URL)  or self._data.get(CONF_TAUTULLI_URL, ""),
-            CONF_TAUTULLI_KEY:  ui.get(CONF_TAUTULLI_KEY)  or self._data.get(CONF_TAUTULLI_KEY, ""),
-            CONF_JELLYSTAT_URL: ui.get(CONF_JELLYSTAT_URL) or self._data.get(CONF_JELLYSTAT_URL, ""),
-            CONF_JELLYSTAT_KEY: ui.get(CONF_JELLYSTAT_KEY) or self._data.get(CONF_JELLYSTAT_KEY, ""),
+            CONF_TAUTULLI_URL:           ui.get(CONF_TAUTULLI_URL)          or self._data.get(CONF_TAUTULLI_URL, ""),
+            CONF_TAUTULLI_KEY:           ui.get(CONF_TAUTULLI_KEY)          or self._data.get(CONF_TAUTULLI_KEY, ""),
+            CONF_JELLYSTAT_URL:          ui.get(CONF_JELLYSTAT_URL)         or self._data.get(CONF_JELLYSTAT_URL, ""),
+            CONF_JELLYSTAT_KEY:          ui.get(CONF_JELLYSTAT_KEY)         or self._data.get(CONF_JELLYSTAT_KEY, ""),
+            CONF_TRACEARR_URL:           ui.get(CONF_TRACEARR_URL)          or self._data.get(CONF_TRACEARR_URL, ""),
+            CONF_TRACEARR_KEY:           ui.get(CONF_TRACEARR_KEY)          or self._data.get(CONF_TRACEARR_KEY, ""),
+            CONF_TRACEARR_REFRESH_TOKEN: ui.get(CONF_TRACEARR_REFRESH_TOKEN) or self._data.get(CONF_TRACEARR_REFRESH_TOKEN, ""),
         }
         schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(

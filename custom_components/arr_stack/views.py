@@ -14,6 +14,91 @@ _LOGGER = logging.getLogger(__name__)
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+# In-memory cache for Tracearr admin JWT tokens: entry_id → {"access": str, "refresh": str}
+_tracearr_token_cache: dict = {}
+
+async def _tracearr_get_access_token(http: aiohttp.ClientSession, tracearr_url: str, entry_id: str, refresh_token: str, ssl=None, hass=None, plex_token: str = "") -> str | None:
+    """Return valid Tracearr admin access token, refreshing if needed."""
+    import time, json as _json
+    cached = _tracearr_token_cache.get(entry_id, {})
+    # Bootstrap from config-stored access token (survives HA restarts)
+    if not cached.get("access") and hass:
+        entries = hass.config_entries.async_entries("arr_stack")
+        if entries:
+            stored_access = entries[0].data.get("tracearr_access_token", "")
+            if stored_access:
+                cached = {"access": stored_access, "refresh": cached.get("refresh", refresh_token)}
+                _tracearr_token_cache[entry_id] = cached
+    access = cached.get("access", "")
+    # Decode JWT exp without verifying signature
+    if access:
+        try:
+            payload = access.split(".")[1]
+            payload += "=" * (4 - len(payload) % 4)
+            import base64 as _b64
+            exp = _json.loads(_b64.b64decode(payload)).get("exp", 0)
+            if exp - time.time() > 60:
+                return access
+        except Exception:
+            pass
+
+    def _persist_tokens(hass, data: dict, refresh_token: str) -> None:
+        if not hass:
+            return
+        entries = hass.config_entries.async_entries("arr_stack")
+        if not entries:
+            return
+        new_refresh = data.get("refreshToken", refresh_token)
+        update = {"tracearr_access_token": data["accessToken"]}
+        if new_refresh != refresh_token:
+            update["tracearr_refresh_token"] = new_refresh
+        hass.config_entries.async_update_entry(entries[0], data={**entries[0].data, **update})
+        return new_refresh
+
+    # Try JWT refresh first
+    cur_refresh = cached.get("refresh", refresh_token)
+    if cur_refresh:
+        try:
+            async with http.post(
+                f"{tracearr_url}/api/v1/auth/refresh",
+                json={"refreshToken": cur_refresh},
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=10),
+                ssl=ssl,
+            ) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    new_refresh = data.get("refreshToken", cur_refresh)
+                    _tracearr_token_cache[entry_id] = {"access": data["accessToken"], "refresh": new_refresh}
+                    _persist_tokens(hass, data, cur_refresh)
+                    return data["accessToken"]
+        except Exception as e:
+            _LOGGER.warning("Tracearr token refresh failed: %s", e)
+
+    # Fallback: re-auth via Plex token (auto-recovers when Plex session expires)
+    if plex_token:
+        for body in [{"authToken": plex_token}, {"plexToken": plex_token}, {"token": plex_token}]:
+            try:
+                async with http.post(
+                    f"{tracearr_url}/api/v1/auth/plex",
+                    json=body,
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                    ssl=ssl,
+                ) as r:
+                    if r.status == 200:
+                        data = await r.json()
+                        if data.get("accessToken"):
+                            new_refresh = data.get("refreshToken", "")
+                            _tracearr_token_cache[entry_id] = {"access": data["accessToken"], "refresh": new_refresh}
+                            _persist_tokens(hass, data, new_refresh)
+                            _LOGGER.info("Tracearr: re-authenticated via Plex token")
+                            return data["accessToken"]
+            except Exception:
+                pass
+
+    return None
+
 from .const import (
     DOMAIN,
     CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
@@ -32,6 +117,7 @@ from .const import (
     CONF_EMBY_URL, CONF_EMBY_KEY,
     CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
     CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY,
+    CONF_TRACEARR_URL, CONF_TRACEARR_KEY, CONF_TRACEARR_REFRESH_TOKEN,
     CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET,
     CONF_TRAKT_ACCESS_TOKEN, CONF_TRAKT_REFRESH_TOKEN, CONF_TRAKT_EXPIRES_AT,
     TRAKT_API_BASE, TRAKT_API_VER,
@@ -288,6 +374,7 @@ class ArrStackProxyView(HomeAssistantView):
                 "plex":       bool(cfg.get(CONF_PLEX_TOKEN)),
                 "tautulli":   bool(cfg.get(CONF_TAUTULLI_URL)),
                 "jellystat":  bool(cfg.get(CONF_JELLYSTAT_URL)),
+                "tracearr":   bool(cfg.get(CONF_TRACEARR_URL)),
                 "trakt":      bool(cfg.get(CONF_TRAKT_CLIENT_ID)),
                 "prowlarr":   bool(cfg.get(CONF_PROWLARR_URL)),
                 "seerrType":  seerr_type,
@@ -2146,11 +2233,9 @@ class ArrStackProxyView(HomeAssistantView):
                 timeout=aiohttp.ClientTimeout(total=15),
                 ssl=ssl,
             ) as r:
-                return web.Response(
-                    body=await r.read(),
-                    content_type="application/json",
-                    status=r.status,
-                )
+                raw = await r.read()
+                ct  = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
+                return web.Response(body=raw, content_type=ct, status=r.status)
 
         # ════════════════════════════════════════════
         # Jellystat
@@ -2192,6 +2277,61 @@ class ArrStackProxyView(HomeAssistantView):
                     ssl=ssl,
                 ) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+        # ════════════════════════════════════════════
+        # Tracearr
+        # ════════════════════════════════════════════
+        elif service == "tracearr":
+            tracearr_url = cfg.get(CONF_TRACEARR_URL, "").rstrip("/")
+            tracearr_key = cfg.get(CONF_TRACEARR_KEY, "")
+            if not tracearr_url or not tracearr_key:
+                return web.json_response({"error": "Tracearr not configured"}, status=503)
+
+            # Library and stats endpoints require admin JWT; public endpoints use the public key
+            is_library = path.startswith("v1/library") or path.startswith("v1/stats")
+            if is_library:
+                refresh_token = cfg.get(CONF_TRACEARR_REFRESH_TOKEN, "")
+                entry_id = next(iter(self._hass.config_entries.async_entries("arr_stack")), None)
+                entry_id_str = entry_id.entry_id if entry_id else "default"
+                plex_token = cfg.get(CONF_PLEX_TOKEN, "")
+                admin_token = await _tracearr_get_access_token(http, tracearr_url, entry_id_str, refresh_token, ssl=ssl, hass=self._hass, plex_token=plex_token)
+                if not admin_token:
+                    return web.json_response({"error": "Tracearr admin token unavailable — set tracearr_refresh_token in config"}, status=503)
+                auth_header = f"Bearer {admin_token}"
+            else:
+                auth_header = f"Bearer {tracearr_key}"
+
+            params = dict(request.rel_url.query)
+            headers = {
+                "Authorization": auth_header,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            }
+
+            target_url = f"{tracearr_url}/api/{path}"
+            if method == "GET":
+                async with http.get(
+                    target_url,
+                    headers=headers,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    ssl=ssl,
+                ) as r:
+                    raw = await r.read()
+                    ct = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
+                    return web.Response(body=raw, content_type=ct, status=r.status)
+            elif method == "POST":
+                body = await request.read()
+                async with http.post(
+                    target_url,
+                    headers=headers,
+                    data=body,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    ssl=ssl,
+                ) as r:
+                    raw = await r.read()
+                    ct = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
+                    return web.Response(body=raw, content_type=ct, status=r.status)
 
         # ════════════════════════════════════════════
         # System
