@@ -14,7 +14,7 @@ A Home Assistant custom integration that acts as a secure server-side proxy betw
 
 ### Supported services
 
-<p><img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/radarr.png" height="36" title="Radarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sonarr.png" height="36" title="Sonarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/bazarr.png" height="36" title="Bazarr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/qbittorrent.png" height="36" title="qBittorrent"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/deluge.png" height="36" title="Deluge"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/rutorrent.png" height="36" title="rTorrent"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sabnzbd.png" height="36" title="SABnzbd"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/nzbget.png" height="36" title="NZBGet"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/overseerr.png" height="36" title="Overseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyseerr.png" height="36" title="Jellyseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tmdb.png" height="36" title="TMDB"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/prowlarr.png" height="36" title="Prowlarr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/plex.png" height="36" title="Plex"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyfin.png" height="36" title="Jellyfin"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/emby.png" height="36" title="Emby"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/kodi.png" height="36" title="Kodi"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tautulli.png" height="36" title="Tautulli"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellystat.png" height="36" title="Jellystat"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/trakt.png" height="36" title="Trakt"/></p>
+<p><img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/radarr.png" height="36" title="Radarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sonarr.png" height="36" title="Sonarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/bazarr.png" height="36" title="Bazarr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/qbittorrent.png" height="36" title="qBittorrent"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/deluge.png" height="36" title="Deluge"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/rutorrent.png" height="36" title="rTorrent"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sabnzbd.png" height="36" title="SABnzbd"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/nzbget.png" height="36" title="NZBGet"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/overseerr.png" height="36" title="Overseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyseerr.png" height="36" title="Jellyseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tmdb.png" height="36" title="TMDB"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/prowlarr.png" height="36" title="Prowlarr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/plex.png" height="36" title="Plex"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyfin.png" height="36" title="Jellyfin"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/emby.png" height="36" title="Emby"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/kodi.png" height="36" title="Kodi"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tautulli.png" height="36" title="Tautulli"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellystat.png" height="36" title="Jellystat"/> <img src="https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/tracearr.svg" height="36" title="Tracearr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/trakt.png" height="36" title="Trakt"/></p>
 
 ---
 
@@ -45,6 +45,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Kodi | Stream monitoring & playback control (via HA integration — no config needed here) | Optional |
 | Tautulli | Watch history, statistics & account sharing detection | Optional |
 | Jellystat | Watch history and statistics | Optional |
+| Tracearr *(beta)* | Watch history, statistics, and usage analytics | Optional |
 | Prowlarr | Indexer management and search statistics | Optional |
 | Trakt | Personalised movie & show recommendations | Optional |
 
@@ -96,7 +97,7 @@ Choose which optional services you want to configure. Only the selected steps wi
 | Bazarr | Bazarr |
 | Discovery | Overseerr / Jellyseerr |
 | Plex / Emby | Plex, Emby |
-| Streaming stats | Tautulli, Jellystat |
+| Streaming stats | Tautulli, Jellystat, Tracearr |
 | Prowlarr | Prowlarr |
 | Trakt | Trakt |
 
@@ -200,7 +201,7 @@ Trending, popular, and upcoming sections are always available without Overseerr.
 
 ---
 
-### Streaming stats — Tautulli + Jellystat *(optional)*
+### Streaming stats — Tautulli + Jellystat + Tracearr *(optional)*
 
 | Field | Notes |
 |-------|-------|
@@ -208,8 +209,26 @@ Trending, popular, and upcoming sections are always available without Overseerr.
 | Tautulli API key | Find in Tautulli → Settings → Web Interface |
 | Jellystat URL | `http://192.168.1.10:4000` |
 | Jellystat API key | Find in Jellystat → Settings |
+| Tracearr URL | `http://192.168.1.10:3102` — default port is 3102 |
+| Tracearr API key | Find in Tracearr → Settings → API |
+| Tracearr refresh token | See below |
 
 > Tautulli also powers **account sharing detection** — alerts when the same user streams from multiple IPs simultaneously.
+
+> **Tracearr is currently in beta.** Some features may be incomplete or change in future updates.
+
+#### Tracearr refresh token
+
+The Tracearr API key (from Settings → API) is sufficient for read-only access. Some analytics features require an additional **refresh token**, which is the long-lived authentication token Tracearr issues when you log in.
+
+**How to get it:**
+
+1. Open Tracearr in your browser and log in with your **local username and password** (not Plex Sign-In — SSO accounts do not have a locally stored token)
+2. Open browser Developer Tools: **F12** → **Application** tab → **Local Storage** → select your Tracearr URL
+3. Find the entry named `refreshToken` and copy its value
+4. Paste it into the **Tracearr refresh token** field in the integration setup
+
+**If you use Plex Sign-In to log into Tracearr** and have Plex configured in Arr Stack, you can leave the refresh token field empty — the integration will authenticate with Tracearr automatically using your Plex token.
 
 ---
 
