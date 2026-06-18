@@ -151,15 +151,15 @@
           "tautulli_api_key": "Tautulli API key (optional)",
           "jellystat_url": "Jellystat URL (optional)",
           "jellystat_api_key": "Jellystat API key (optional)",
-          "tracearr_url": "Tracearr URL (optional)",
-          "tracearr_api_key": "Tracearr API key (optional)"
+          "tracearr_url": "Tracearr URL (optional, beta)",
+          "tracearr_api_key": "Tracearr API key (optional, beta)"
         },
         "data_description": {
           "tautulli_url": "e.g. http://192.168.1.10:8181 — default port is 8181",
           "tautulli_api_key": "Find it in Tautulli → Settings → Web Interface → API Key",
           "jellystat_url": "e.g. http://192.168.1.10:4000 — default port is 4000",
           "jellystat_api_key": "Find it in Jellystat → Settings → API Key",
-          "tracearr_url": "e.g. http://192.168.1.10:3102 — default port is 3102",
+          "tracearr_url": "e.g. http://192.168.1.10:3102 — default port is 3102 — ⚠️ beta feature",
           "tracearr_api_key": "Find it in Tracearr → Settings → API Key"
         }
       },
