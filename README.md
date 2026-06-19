@@ -223,12 +223,10 @@ The Tracearr API key (from Settings → API) is sufficient for read-only access.
 
 **How to get it:**
 
-1. Open Tracearr in your browser and log in with your **local username and password** (not Plex Sign-In — SSO accounts do not have a locally stored token)
+1. Open Tracearr in your browser and log in (works with both local username/password and Plex Sign-In)
 2. Open browser Developer Tools: **F12** → **Application** tab → **Local Storage** → select your Tracearr URL
 3. Find the entry named `refreshToken` and copy its value
 4. Paste it into the **Tracearr refresh token** field in the integration setup
-
-**If you use Plex Sign-In to log into Tracearr** and have Plex configured in Arr Stack, you can leave the refresh token field empty — the integration will authenticate with Tracearr automatically using your Plex token.
 
 ---
 
