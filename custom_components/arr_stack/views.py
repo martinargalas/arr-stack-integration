@@ -330,6 +330,9 @@ class ArrStackProxyView(HomeAssistantView):
     async def put(self, request: web.Request, service: str, path: str) -> web.Response:
         return await self._handle(request, service, path, "PUT")
 
+    async def patch(self, request: web.Request, service: str, path: str) -> web.Response:
+        return await self._handle(request, service, path, "PATCH")
+
     async def delete(self, request: web.Request, service: str, path: str) -> web.Response:
         return await self._handle(request, service, path, "DELETE")
 
@@ -745,6 +748,10 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path == "diskspace":
+                async with http.get(f"{base}/api/v3/diskspace", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "queue":
                 incl = request.query.get("includeUnknownMovieItems", "false")
                 async with http.get(
@@ -940,6 +947,10 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "rootfolders":
                 async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "diskspace":
+                async with http.get(f"{base}/api/v3/diskspace", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "queue":
@@ -1156,6 +1167,10 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path == "diskspace":
+                async with http.get(f"{base}/api/v3/diskspace", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "queue":
                 async with http.get(f"{base}/api/v3/queue?includeMovie=false&pageSize=100", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
@@ -1293,6 +1308,10 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "rootfolders":
                 async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "diskspace":
+                async with http.get(f"{base}/api/v3/diskspace", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "queue":
@@ -2287,8 +2306,8 @@ class ArrStackProxyView(HomeAssistantView):
             if not tracearr_url or not tracearr_key:
                 return web.json_response({"error": "Tracearr not configured"}, status=503)
 
-            # Library and stats endpoints require admin JWT; public endpoints use the public key
-            is_library = path.startswith("v1/library") or path.startswith("v1/stats")
+            # Library, stats and rules endpoints require admin JWT; public endpoints use the public key
+            is_library = path.startswith("v1/library") or path.startswith("v1/stats") or path.startswith("v1/rules")
             if is_library:
                 refresh_token = cfg.get(CONF_TRACEARR_REFRESH_TOKEN, "")
                 entry_id = next(iter(self._hass.config_entries.async_entries("arr_stack")), None)
@@ -2326,6 +2345,28 @@ class ArrStackProxyView(HomeAssistantView):
                     target_url,
                     headers=headers,
                     data=body,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    ssl=ssl,
+                ) as r:
+                    raw = await r.read()
+                    ct = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
+                    return web.Response(body=raw, content_type=ct, status=r.status)
+            elif method == "PATCH":
+                body = await request.read()
+                async with http.patch(
+                    target_url,
+                    headers=headers,
+                    data=body,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    ssl=ssl,
+                ) as r:
+                    raw = await r.read()
+                    ct = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
+                    return web.Response(body=raw, content_type=ct, status=r.status)
+            elif method == "DELETE":
+                async with http.delete(
+                    target_url,
+                    headers=headers,
                     timeout=aiohttp.ClientTimeout(total=15),
                     ssl=ssl,
                 ) as r:
