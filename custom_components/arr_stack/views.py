@@ -2921,6 +2921,34 @@ class ArrStackProxyView(HomeAssistantView):
             except Exception as e:
                 return web.json_response({"error": str(e)}, status=502)
 
+        # POST /trakt/rate  →  rate movie or show (rating 1-10)
+        if path == "rate" and method == "POST":
+            try:
+                body       = await request.json()
+                media_type = body.get("mediaType", "movie")
+                slug       = body.get("slug")
+                tmdb_id    = body.get("tmdbId")
+                rating     = int(body.get("rating", 8))
+                ids_obj: dict = {}
+                if slug:    ids_obj["slug"] = slug
+                if tmdb_id: ids_obj["tmdb"] = tmdb_id
+                if media_type == "tv":
+                    payload = {"shows": [{"ids": ids_obj, "rating": rating}]}
+                else:
+                    payload = {"movies": [{"ids": ids_obj, "rating": rating}]}
+                async with session.post(
+                    f"{TRAKT_API_BASE}/sync/ratings",
+                    headers=headers,
+                    json=payload,
+                    ssl=ssl,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    if r.status in (200, 201):
+                        return web.json_response({"ok": True})
+                    return web.json_response({"error": await r.text()}, status=r.status)
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=502)
+
         return web.json_response({"error": "unknown trakt path"}, status=404)
 
     async def _enrich_trakt_posters(self, items: list, session: aiohttp.ClientSession, ssl) -> list:
