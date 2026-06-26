@@ -376,7 +376,11 @@ async def _test_tautulli(session: aiohttp.ClientSession, url: str, key: str, ssl
         return None
     if err := _url_error(url):
         return err
-    test_url = f"{url.rstrip('/')}/api/v2"
+    _base = url.rstrip("/")
+    for _sfx in ("/api/v2", "/home", "/settings", "/history", "/recently_added"):
+        if _base.endswith(_sfx):
+            _base = _base[: -len(_sfx)].rstrip("/")
+    test_url = f"{_base}/api/v2"
     _LOGGER.debug("arr_stack [tautulli] testing connection → %s", test_url)
     try:
         async with session.get(
@@ -538,7 +542,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional('enable_bazarr',    default=bool(d.get(CONF_BAZARR_URL))): bool,
             vol.Optional('enable_discovery', default=bool(d.get(CONF_SEERR_URL))): bool,
             vol.Optional('enable_plex',      default=bool(d.get(CONF_PLEX_TOKEN) or d.get(CONF_EMBY_URL))): bool,
-            vol.Optional('enable_jellyfin',  default=bool(d.get(CONF_TAUTULLI_URL) or d.get(CONF_JELLYSTAT_URL))): bool,
+            vol.Optional('enable_jellyfin',  default=bool(d.get(CONF_TAUTULLI_URL) or d.get(CONF_JELLYSTAT_URL) or d.get(CONF_TRACEARR_URL))): bool,
             vol.Optional('enable_trakt',     default=bool(d.get(CONF_TRAKT_CLIENT_ID))): bool,
             vol.Optional('enable_prowlarr',  default=bool(d.get(CONF_PROWLARR_URL))): bool,
         })

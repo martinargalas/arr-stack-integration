@@ -2224,6 +2224,9 @@ class ArrStackProxyView(HomeAssistantView):
         # ════════════════════════════════════════════
         elif service == "tautulli":
             tautulli_url = cfg.get(CONF_TAUTULLI_URL, "").rstrip("/")
+            for _sfx in ("/api/v2", "/home", "/settings", "/history", "/recently_added"):
+                if tautulli_url.endswith(_sfx):
+                    tautulli_url = tautulli_url[: -len(_sfx)].rstrip("/")
             tautulli_key = cfg.get(CONF_TAUTULLI_KEY, "")
             if not tautulli_url or not tautulli_key:
                 return web.json_response({"error": "Tautulli not configured"}, status=503)
