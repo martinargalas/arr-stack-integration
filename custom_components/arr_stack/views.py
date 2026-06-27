@@ -846,11 +846,25 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path == "movie-editor" and method == "PUT":
+                body = await request.json()
+                async with http.put(f"{base}/api/v3/movie/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "movie-editor" and method == "DELETE":
+                body = await request.json()
+                async with http.delete(f"{base}/api/v3/movie/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "command" and method == "POST":
                 body = await request.json()
                 async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path.startswith("command/") and method == "GET":
+                cmd_id = path.split("/", 1)[1]
+                async with http.get(f"{base}/api/v3/command/{cmd_id}", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "wanted/missing" and method == "GET":
                 page      = request.query.get("page", "1")
@@ -1037,9 +1051,24 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.put(f"{base}/api/v3/series/{series_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path == "series-editor" and method == "PUT":
+                body = await request.json()
+                async with http.put(f"{base}/api/v3/series/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "series-editor" and method == "DELETE":
+                body = await request.json()
+                async with http.delete(f"{base}/api/v3/series/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "command" and method == "POST":
                 body = await request.json()
                 async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path.startswith("command/") and method == "GET":
+                cmd_id = path.split("/", 1)[1]
+                async with http.get(f"{base}/api/v3/command/{cmd_id}", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "wanted/missing" and method == "GET":
@@ -1212,9 +1241,24 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path == "movie-editor" and method == "PUT":
+                body = await request.json()
+                async with http.put(f"{base}/api/v3/movie/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "movie-editor" and method == "DELETE":
+                body = await request.json()
+                async with http.delete(f"{base}/api/v3/movie/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "command" and method == "POST":
                 body = await request.json()
                 async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path.startswith("command/") and method == "GET":
+                cmd_id = path.split("/", 1)[1]
+                async with http.get(f"{base}/api/v3/command/{cmd_id}", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "wanted/missing" and method == "GET":
@@ -1399,9 +1443,24 @@ class ArrStackProxyView(HomeAssistantView):
                     body = await r.read()
                     return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
 
+            if path == "series-editor" and method == "PUT":
+                body = await request.json()
+                async with http.put(f"{base}/api/v3/series/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "series-editor" and method == "DELETE":
+                body = await request.json()
+                async with http.delete(f"{base}/api/v3/series/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "command" and method == "POST":
                 body = await request.json()
                 async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path.startswith("command/") and method == "GET":
+                cmd_id = path.split("/", 1)[1]
+                async with http.get(f"{base}/api/v3/command/{cmd_id}", headers=hdrs, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "wanted/missing" and method == "GET":
