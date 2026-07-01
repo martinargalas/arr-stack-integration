@@ -18,6 +18,7 @@ from .const import (
     CONF_SAB_URL, CONF_SAB_KEY,
     CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS,
     CONF_DELUGE_URL, CONF_DELUGE_PASS,
+    CONF_GLUETUN_URL, CONF_GLUETUN_KEY,
     CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS,
     CONF_RADARR_URL, CONF_RADARR_KEY,
     CONF_RADARR2_URL, CONF_RADARR2_KEY,
@@ -596,7 +597,8 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not errors:
                 for key in [CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
                              CONF_DELUGE_URL, CONF_DELUGE_PASS,
-                             CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS]:
+                             CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS,
+                             CONF_GLUETUN_URL, CONF_GLUETUN_KEY]:
                     self._data[key] = user_input.get(key, "")
                 return await self._next_step()
 
@@ -609,6 +611,8 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_RTORRENT_URL):  str,
             vol.Optional(CONF_RTORRENT_USER): str,
             vol.Optional(CONF_RTORRENT_PASS): str,
+            vol.Optional(CONF_GLUETUN_URL):   str,
+            vol.Optional(CONF_GLUETUN_KEY):   str,
         })
         suggested = self._data if self._data else {
             CONF_QBIT_URL:      "http://192.168.1.x:8081",
@@ -616,6 +620,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_DELUGE_URL:    "http://192.168.1.x:8112",
             CONF_RTORRENT_URL:  "http://192.168.1.x:9080",
             CONF_RTORRENT_USER: "",
+            CONF_GLUETUN_URL:   "http://192.168.1.x:8000",
         }
         schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(

@@ -14,6 +14,9 @@ CONF_NZBGET_PASS = "nzbget_password"
 CONF_DELUGE_URL  = "deluge_url"
 CONF_DELUGE_PASS = "deluge_password"
 
+CONF_GLUETUN_URL = "gluetun_url"
+CONF_GLUETUN_KEY = "gluetun_api_key"
+
 CONF_RTORRENT_URL  = "rtorrent_url"
 CONF_RTORRENT_USER = "rtorrent_user"
 CONF_RTORRENT_PASS = "rtorrent_password"

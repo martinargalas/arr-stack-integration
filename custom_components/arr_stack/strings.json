@@ -37,7 +37,9 @@
           "deluge_password": "Deluge password (optional)",
           "rtorrent_url": "rTorrent URL (optional)",
           "rtorrent_user": "rTorrent / ruTorrent username (optional)",
-          "rtorrent_password": "rTorrent / ruTorrent password (optional)"
+          "rtorrent_password": "rTorrent / ruTorrent password (optional)",
+          "gluetun_url": "Gluetun URL (optional)",
+          "gluetun_api_key": "Gluetun API key (optional)"
         },
         "data_description": {
           "qbittorrent_url": "e.g. http://192.168.1.10:8081 — default port is 8081",
@@ -47,7 +49,9 @@
           "deluge_password": "Deluge Web UI password (set in Preferences → Interface)",
           "rtorrent_url": "e.g. http://192.168.1.10:9080 — base URL of ruTorrent (XMLRPC at /RPC2)",
           "rtorrent_user": "HTTP Basic auth username for ruTorrent (if configured in nginx)",
-          "rtorrent_password": "HTTP Basic auth password for ruTorrent"
+          "rtorrent_password": "HTTP Basic auth password for ruTorrent",
+          "gluetun_url": "e.g. http://192.168.1.10:8000 — Gluetun HTTP control server (default port 8000)",
+          "gluetun_api_key": "API key defined in /gluetun/auth/config.toml (leave empty if auth disabled)"
         }
       },
       "usenet": {

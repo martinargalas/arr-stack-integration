@@ -105,6 +105,7 @@ from .const import (
     CONF_SAB_URL, CONF_SAB_KEY,
     CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS,
     CONF_DELUGE_URL, CONF_DELUGE_PASS,
+    CONF_GLUETUN_URL, CONF_GLUETUN_KEY,
     CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS,
     CONF_RADARR_URL, CONF_RADARR_KEY,
     CONF_RADARR2_URL, CONF_RADARR2_KEY,
@@ -369,6 +370,7 @@ class ArrStackProxyView(HomeAssistantView):
                 "sabnzbd":    bool(cfg.get(CONF_SAB_URL)),
                 "nzbget":     bool(cfg.get(CONF_NZBGET_URL)),
                 "deluge":     bool(cfg.get(CONF_DELUGE_URL)),
+                "gluetun":    bool(cfg.get(CONF_GLUETUN_URL)),
                 "rtorrent":   bool(cfg.get(CONF_RTORRENT_URL)),
                 "radarr2":    bool(cfg.get(CONF_RADARR2_URL)),
                 "sonarr2":    bool(cfg.get(CONF_SONARR2_URL)),
@@ -707,6 +709,23 @@ class ArrStackProxyView(HomeAssistantView):
                 return web.json_response({"ok": True})
 
         # ════════════════════════════════════════════
+        # Gluetun
+        # ════════════════════════════════════════════
+        elif service == "gluetun":
+            base = cfg.get(CONF_GLUETUN_URL, "").rstrip("/")
+            if not base:
+                return web.json_response({"error": "Gluetun not configured"}, status=503)
+            gt_path = "/v1/vpn/status" if path == "status" else "/v1/publicip/ip" if path == "ip" else None
+            if gt_path is None:
+                return web.json_response({"error": "unknown path"}, status=400)
+            gt_key = cfg.get(CONF_GLUETUN_KEY, "") or ""
+            gt_hdrs = {"X-API-Key": gt_key} if gt_key else {}
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{base}{gt_path}", headers=gt_hdrs, ssl=ssl, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    body = await r.read()
+                    return web.Response(body=body, status=r.status, content_type="application/json")
+
+        # ════════════════════════════════════════════
         # Radarr
         # ════════════════════════════════════════════
         elif service == "radarr":
@@ -844,6 +863,11 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "history" and method == "GET":
                 movie_id = request.query.get("movieId", "")
                 async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "calendar" and method == "GET":
+                params = {**dict(request.query), "unmonitored": "true"}
+                async with http.get(f"{base}/api/v3/calendar", headers=hdrs, params=params, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
             if path == "movie-editor" and method == "PUT":
@@ -1241,6 +1265,11 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path == "calendar" and method == "GET":
+                params = {**dict(request.query), "unmonitored": "true"}
+                async with http.get(f"{base}/api/v3/calendar", headers=hdrs, params=params, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "movie-editor" and method == "PUT":
                 body = await request.json()
                 async with http.put(f"{base}/api/v3/movie/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
@@ -1611,6 +1640,8 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v1/{path}", headers=hdrs,
                     ssl=ssl,
                 ) as r:
+                    if r.status == 404 and path.endswith("/ratings"):
+                        return web.json_response({})
                     return web.Response(
                         body=await r.read(),
                         content_type="application/json",
