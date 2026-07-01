@@ -53,6 +53,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Tracearr *(beta)* | Watch history, statistics, and usage analytics | Optional |
 | Prowlarr | Indexer management and search statistics | Optional |
 | Trakt | Personalised movie & show recommendations | Optional |
+| Gluetun | VPN status in the downloads panel | Optional |
 
 > **Note:** Plex, Jellyfin, and Kodi also require their official Home Assistant integrations to be installed and connected — [Plex](https://www.home-assistant.io/integrations/plex/), [Jellyfin](https://www.home-assistant.io/integrations/jellyfin/), [Kodi](https://www.home-assistant.io/integrations/kodi/). The card uses these HA integrations for live stream detection. Emby does not have an official HA integration — configure it directly in Arr Stack instead.
 
@@ -105,6 +106,7 @@ Choose which optional services you want to configure. Only the selected steps wi
 | Streaming stats | Tautulli, Jellystat, Tracearr |
 | Prowlarr | Prowlarr |
 | Trakt | Trakt |
+| Gluetun | Gluetun |
 
 ---
 
@@ -241,6 +243,27 @@ The Tracearr API key (from Settings → API) is sufficient for read-only access.
 |-------|---------|
 | Prowlarr URL | `http://192.168.1.10:9696` |
 | Prowlarr API key | Find in Prowlarr → Settings → General |
+
+---
+
+### Gluetun *(optional)*
+
+Displays a VPN status badge in the downloads panel — current status, public IP, country, and provider logo.
+
+Gluetun's control server must be reachable from Home Assistant:
+
+1. **Expose port 8000** in your Gluetun container — map it to any free host port, e.g. `8002:8000`
+2. **Create an API key config** at `/gluetun/auth/config.toml` (bind-mounted into the container):
+   ```toml
+   [[roles]]
+   name = "admin"
+   auth = "apikey"
+   apikey = "your-api-key"
+   routes = ["GET /v1/vpn/status", "GET /v1/publicip/ip"]
+   ```
+3. Enter the **URL** (e.g. `http://192.168.1.10:8002`) and your **API key** in the setup step.
+
+> The `auth = "apikey"` line is required — Gluetun does not support unauthenticated access. Without the config file the container will crash on startup.
 
 ---
 
