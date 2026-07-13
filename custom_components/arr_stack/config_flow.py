@@ -37,6 +37,7 @@ from .const import (
     TRAKT_API_BASE,
     CONF_PROWLARR_URL, CONF_PROWLARR_KEY,
     CONF_SKIP_SSL_VERIFY,
+    CONF_DEBUG_LOGGING,
 )
 
 
@@ -511,10 +512,12 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             self._data[CONF_SKIP_SSL_VERIFY] = user_input.get(CONF_SKIP_SSL_VERIFY, False)
+            self._data[CONF_DEBUG_LOGGING]   = user_input.get(CONF_DEBUG_LOGGING, False)
             return await self.async_step_service_selection()
 
         schema = vol.Schema({
             vol.Optional(CONF_SKIP_SSL_VERIFY, default=self._data.get(CONF_SKIP_SSL_VERIFY, False)): bool,
+            vol.Optional(CONF_DEBUG_LOGGING,   default=self._data.get(CONF_DEBUG_LOGGING, False)):   bool,
         })
         return self.async_show_form(
             step_id="user",

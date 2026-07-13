@@ -124,6 +124,7 @@ from .const import (
     TRAKT_API_BASE, TRAKT_API_VER,
     CONF_PROWLARR_URL, CONF_PROWLARR_KEY,
     CONF_SKIP_SSL_VERIFY,
+    CONF_DEBUG_LOGGING,
 )
 
 async def _plex_detect_server(session: aiohttp.ClientSession, token: str) -> str:
@@ -214,14 +215,29 @@ class ArrStackProxyView(HomeAssistantView):
             )
         return self._qbit_session
 
-    async def _qbit_login(self, session: aiohttp.ClientSession, ssl=None) -> None:
-        """Přihlásí se do qBit (nastaví session cookie)."""
+    async def _qbit_login(self, session: aiohttp.ClientSession, ssl=None, debug=False) -> None:
+        """Přihlásí se do qBit (nastaví session cookie).
+
+        qBit login endpoint vrací 200 i při špatných credentials (body "Fails."),
+        a 403 při IP banu (ochrana proti brute-force, default 5 pokusů/30min).
+        Bez kontroly response je tohle neviditelné — downstream volání pak
+        dostanou neautentizovanou odpověď a JSON parse selže s nejasnou chybou.
+        """
         url = f"{self._cfg.get(CONF_QBIT_URL, '')}/api/v2/auth/login"
         async with session.post(url, data={
             "username": self._cfg.get(CONF_QBIT_USER, ""),
             "password": self._cfg.get(CONF_QBIT_PASS, ""),
         }, ssl=ssl) as r:
-            await r.read()
+            body = await r.read()
+            if r.status != 200 or body != b"Ok.":
+                _LOGGER.warning(
+                    "arr_stack qbit login failed — status=%s body=%s (check credentials, "
+                    "IP ban from repeated failed logins, or 'Host header validation' in "
+                    "qBittorrent WebUI settings)",
+                    r.status, body[:200],
+                )
+            elif debug:
+                _LOGGER.debug("arr_stack qbit login → status=%s body=%s", r.status, body)
 
     def _csrf_from_jar(self, session: aiohttp.ClientSession) -> tuple[dict, dict]:
         """Extrahuje XSRF-TOKEN a _csrf z cookie jaru — vrátí (extra_headers, cookies)."""
@@ -352,10 +368,10 @@ class ArrStackProxyView(HomeAssistantView):
     async def _route(
         self, request: web.Request, service: str, path: str, method: str
     ) -> web.Response:
-        debug = bool(request.query.get("_debug"))
+        cfg = self._cfg
+        debug = bool(request.query.get("_debug")) or bool(cfg.get(CONF_DEBUG_LOGGING))
         if debug:
             _LOGGER.debug("arr_stack → %s/%s [%s]", service, path, method)
-        cfg = self._cfg
         http = async_get_clientsession(self._hass)
         ssl = False if cfg.get(CONF_SKIP_SSL_VERIFY) else None
 
@@ -392,7 +408,7 @@ class ArrStackProxyView(HomeAssistantView):
             if not cfg.get(CONF_QBIT_URL):
                 return web.json_response({"error": "qBittorrent not configured"}, status=503)
             qs = await self._qbit_sess()
-            await self._qbit_login(qs, ssl=ssl)
+            await self._qbit_login(qs, ssl=ssl, debug=debug)
 
             if path == "torrents":
                 url = f"{cfg[CONF_QBIT_URL]}/api/v2/torrents/info?filter=all"
@@ -2399,8 +2415,8 @@ class ArrStackProxyView(HomeAssistantView):
             if not tracearr_url or not tracearr_key:
                 return web.json_response({"error": "Tracearr not configured"}, status=503)
 
-            # Library, stats and rules endpoints require admin JWT; public endpoints use the public key
-            is_library = path.startswith("v1/library") or path.startswith("v1/stats") or path.startswith("v1/rules")
+            # Library, stats, rules and sessions endpoints require admin JWT; public endpoints use the public key
+            is_library = path.startswith("v1/library") or path.startswith("v1/stats") or path.startswith("v1/rules") or path.startswith("v1/sessions")
             if is_library:
                 refresh_token = cfg.get(CONF_TRACEARR_REFRESH_TOKEN, "")
                 entry_id = next(iter(self._hass.config_entries.async_entries("arr_stack")), None)

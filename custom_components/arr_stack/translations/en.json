@@ -5,10 +5,12 @@
         "title": "Arr Stack — Global Settings",
         "description": "Optional global settings that apply to all services.",
         "data": {
-          "skip_ssl_verify": "Skip SSL certificate verification"
+          "skip_ssl_verify": "Skip SSL certificate verification",
+          "debug_logging": "Enable debug logging"
         },
         "data_description": {
-          "skip_ssl_verify": "Enable if any of your services use self-signed certificates or are behind a reverse proxy with an untrusted cert. Leave disabled for normal setups."
+          "skip_ssl_verify": "Enable if any of your services use self-signed certificates or are behind a reverse proxy with an untrusted cert. Leave disabled for normal setups.",
+          "debug_logging": "Logs every proxy request (URL, response status/body) to the Home Assistant log at DEBUG level. Enable when reporting a bug, then disable again afterwards."
         }
       },
       "service_selection": {

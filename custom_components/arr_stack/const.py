@@ -72,6 +72,7 @@ CONF_PROWLARR_URL = "prowlarr_url"
 CONF_PROWLARR_KEY = "prowlarr_api_key"
 
 CONF_SKIP_SSL_VERIFY = "skip_ssl_verify"
+CONF_DEBUG_LOGGING   = "debug_logging"
 
 TMDB_API_KEY = "da641d34100bf2ab90904ca84d424ef6"
 TMDB_BASE    = "https://api.themoviedb.org/3"
