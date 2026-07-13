@@ -223,7 +223,7 @@ class ArrStackProxyView(HomeAssistantView):
         Bez kontroly response je tohle neviditelné — downstream volání pak
         dostanou neautentizovanou odpověď a JSON parse selže s nejasnou chybou.
         """
-        url = f"{self._cfg.get(CONF_QBIT_URL, '')}/api/v2/auth/login"
+        url = f"{self._cfg.get(CONF_QBIT_URL, '').rstrip('/')}/api/v2/auth/login"
         async with session.post(url, data={
             "username": self._cfg.get(CONF_QBIT_USER, ""),
             "password": self._cfg.get(CONF_QBIT_PASS, ""),
@@ -309,7 +309,7 @@ class ArrStackProxyView(HomeAssistantView):
 
     async def _seerr_family_login(self, session: aiohttp.ClientSession, ssl=None) -> None:
         """Přihlásí se do Overseerr jako rodinný účet (nastaví session cookie)."""
-        base = self._cfg.get(CONF_SEERR_URL, "")
+        base = self._cfg.get(CONF_SEERR_URL, "").rstrip("/")
         # GET first to get CSRF cookies — Overseerr double-submit cookie pattern
         csrf_token = ""
         _csrf_value = ""
@@ -411,7 +411,7 @@ class ArrStackProxyView(HomeAssistantView):
             await self._qbit_login(qs, ssl=ssl, debug=debug)
 
             if path == "torrents":
-                url = f"{cfg[CONF_QBIT_URL]}/api/v2/torrents/info?filter=all"
+                url = f"{cfg[CONF_QBIT_URL].rstrip('/')}/api/v2/torrents/info?filter=all"
                 if debug: _LOGGER.debug("arr_stack qbit → GET %s", url)
                 async with qs.get(url, ssl=ssl) as r:
                     body = await r.read()
@@ -420,7 +420,7 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "transfer":
                 async with qs.get(
-                    f"{cfg[CONF_QBIT_URL]}/api/v2/transfer/info",
+                    f"{cfg[CONF_QBIT_URL].rstrip('/')}/api/v2/transfer/info",
                     ssl=ssl,
                 ) as r:
                     return web.Response(
@@ -431,7 +431,7 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "maindata":
                 async with qs.get(
-                    f"{cfg[CONF_QBIT_URL]}/api/v2/sync/maindata",
+                    f"{cfg[CONF_QBIT_URL].rstrip('/')}/api/v2/sync/maindata",
                     ssl=ssl,
                 ) as r:
                     return web.Response(
@@ -457,12 +457,12 @@ class ArrStackProxyView(HomeAssistantView):
                 )
 
                 async with qs.post(
-                    f"{cfg[CONF_QBIT_URL]}{v5ep}", data=data,
+                    f"{cfg[CONF_QBIT_URL].rstrip('/')}{v5ep}", data=data,
                     ssl=ssl,
                 ) as r:
                     if r.status == 404 and v4ep != v5ep:
                         async with qs.post(
-                            f"{cfg[CONF_QBIT_URL]}{v4ep}", data=data,
+                            f"{cfg[CONF_QBIT_URL].rstrip('/')}{v4ep}", data=data,
                             ssl=ssl,
                         ) as r2:
                             return web.json_response({"ok": r2.status == 200})
@@ -472,7 +472,7 @@ class ArrStackProxyView(HomeAssistantView):
         # SABnzbd
         # ════════════════════════════════════════════
         elif service == "sabnzbd":
-            base = cfg.get(CONF_SAB_URL, "")
+            base = cfg.get(CONF_SAB_URL, "").rstrip("/")
             if not base:
                 return web.json_response({"error": "SABnzbd not configured"}, status=503)
             key = cfg.get(CONF_SAB_KEY, "")
@@ -745,7 +745,7 @@ class ArrStackProxyView(HomeAssistantView):
         # Radarr
         # ════════════════════════════════════════════
         elif service == "radarr":
-            base = cfg.get(CONF_RADARR_URL, "")
+            base = cfg.get(CONF_RADARR_URL, "").rstrip("/")
             hdrs = {"X-Api-Key": cfg.get(CONF_RADARR_KEY, "")}
 
             if path == "movies":
@@ -973,7 +973,7 @@ class ArrStackProxyView(HomeAssistantView):
         # Sonarr
         # ════════════════════════════════════════════
         elif service == "sonarr":
-            base = cfg.get(CONF_SONARR_URL, "")
+            base = cfg.get(CONF_SONARR_URL, "").rstrip("/")
             hdrs = {"X-Api-Key": cfg.get(CONF_SONARR_KEY, "")}
 
             if path == "profiles":
@@ -1205,7 +1205,7 @@ class ArrStackProxyView(HomeAssistantView):
         elif service == "radarr2":
             if not cfg.get(CONF_RADARR2_URL):
                 return web.json_response({"_notConfigured": True})
-            base = cfg.get(CONF_RADARR2_URL, "")
+            base = cfg.get(CONF_RADARR2_URL, "").rstrip("/")
             hdrs = {"X-Api-Key": cfg.get(CONF_RADARR2_KEY, "")}
 
             if path == "movies":
@@ -1376,7 +1376,7 @@ class ArrStackProxyView(HomeAssistantView):
         elif service == "sonarr2":
             if not cfg.get(CONF_SONARR2_URL):
                 return web.json_response({"_notConfigured": True})
-            base = cfg.get(CONF_SONARR2_URL, "")
+            base = cfg.get(CONF_SONARR2_URL, "").rstrip("/")
             hdrs = {"X-Api-Key": cfg.get(CONF_SONARR2_KEY, "")}
 
             if path == "profiles":
@@ -1569,7 +1569,7 @@ class ArrStackProxyView(HomeAssistantView):
         # Overseerr
         # ════════════════════════════════════════════
         elif service == "overseerr":
-            base = cfg.get(CONF_SEERR_URL, "")
+            base = cfg.get(CONF_SEERR_URL, "").rstrip("/")
             if not base:
                 return web.json_response([], status=200)
             hdrs = {
@@ -1864,7 +1864,7 @@ class ArrStackProxyView(HomeAssistantView):
         # Bazarr (volitelný)
         # ════════════════════════════════════════════
         elif service == "bazarr":
-            base = cfg.get(CONF_BAZARR_URL, "")
+            base = cfg.get(CONF_BAZARR_URL, "").rstrip("/")
             if not base:
                 return web.json_response({"data": []})
             hdrs = {
