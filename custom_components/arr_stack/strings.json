@@ -113,13 +113,17 @@
           "seerr_url": "Overseerr / Jellyseerr URL (optional)",
           "seerr_api_key": "Overseerr / Jellyseerr API key (optional)",
           "seerr_family_email": "Family account email (optional)",
-          "seerr_family_password": "Family account password (optional)"
+          "seerr_family_password": "Family account password (optional)",
+          "seerr_guest_email": "Guest account email (optional)",
+          "seerr_guest_password": "Guest account password (optional)"
         },
         "data_description": {
           "seerr_url": "e.g. http://192.168.1.10:5055 — default port is 5055",
           "seerr_api_key": "Find it in Overseerr/Jellyseerr → Settings → General → API Key",
           "seerr_family_email": "A non-admin Overseerr/Jellyseerr account for family members — used to show and withdraw their own requests",
-          "seerr_family_password": "Password for the family account"
+          "seerr_family_password": "Password for the family account",
+          "seerr_guest_email": "A non-admin Overseerr/Jellyseerr account for guests — map HA users to this account in the card editor",
+          "seerr_guest_password": "Password for the guest account"
         }
       },
       "bazarr": {
@@ -229,6 +233,9 @@
       "seerr_family_bad_credentials": "Wrong family account email or password",
       "seerr_family_login_failed": "Family account login failed — check the email and password",
       "seerr_family_is_admin": "The family account has admin permissions — use a non-admin account for the family account field",
+      "seerr_guest_bad_credentials": "Wrong guest account email or password",
+      "seerr_guest_login_failed": "Guest account login failed — check the email and password",
+      "seerr_guest_is_admin": "The guest account has admin permissions — use a non-admin account for the guest account field",
       "bazarr_bad_key": "Invalid Bazarr API key — find it in Bazarr → Settings → General → API Key",
       "bazarr_error": "Bazarr returned an unexpected error — check the URL and that Bazarr is running",
       "bazarr_wrong_port": "Bazarr not found at this address — default port is 6767. Check the URL",

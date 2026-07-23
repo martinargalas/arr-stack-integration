@@ -113,6 +113,7 @@ from .const import (
     CONF_SONARR2_URL, CONF_SONARR2_KEY,
     CONF_SEERR_URL, CONF_SEERR_KEY,
     CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS,
+    CONF_SEERR_GUEST_EMAIL, CONF_SEERR_GUEST_PASS,
     CONF_BAZARR_URL, CONF_BAZARR_KEY,
     CONF_PLEX_TOKEN, CONF_PLEX_URL, PLEX_CLIENT_ID,
     CONF_EMBY_URL, CONF_EMBY_KEY,
@@ -194,6 +195,8 @@ class ArrStackProxyView(HomeAssistantView):
         self._seerr_admin_session: aiohttp.ClientSession | None = None
         # Session pro rodinný Overseerr účet
         self._seerr_family_session: aiohttp.ClientSession | None = None
+        # Session pro guest Overseerr účet
+        self._seerr_guest_session: aiohttp.ClientSession | None = None
         # Cache pro auto-detekovanou Plex URL (když user nezadal manuální)
         self._plex_url_cache: str | None = None
         # Cache pro Trakt recommendations (TTL 30 min)
@@ -336,6 +339,46 @@ class ArrStackProxyView(HomeAssistantView):
         }, headers=login_hdrs, cookies=req_cookies if req_cookies else None, ssl=ssl) as r:
             await r.read()
 
+    async def _seerr_guest_sess(self, ssl=None) -> aiohttp.ClientSession:
+        if self._seerr_guest_session is None or self._seerr_guest_session.closed:
+            self._seerr_guest_session = aiohttp.ClientSession(
+                cookie_jar=aiohttp.CookieJar(unsafe=True)
+            )
+            await self._seerr_guest_login(self._seerr_guest_session, ssl=ssl)
+        return self._seerr_guest_session
+
+    async def _seerr_guest_login(self, session: aiohttp.ClientSession, ssl=None) -> None:
+        base = self._cfg.get(CONF_SEERR_URL, "").rstrip("/")
+        csrf_token = ""
+        _csrf_value = ""
+        try:
+            async with session.get(f"{base}/api/v1/auth/me", ssl=ssl) as _:
+                pass
+            for cookie in session.cookie_jar:
+                if cookie.key == "XSRF-TOKEN":
+                    csrf_token = cookie.value
+                if cookie.key == "_csrf":
+                    _csrf_value = cookie.value
+        except Exception:
+            pass
+        login_hdrs = {"Accept": "application/json", "Content-Type": "application/json"}
+        req_cookies = {}
+        if csrf_token:
+            login_hdrs["X-XSRF-TOKEN"] = csrf_token
+            req_cookies["XSRF-TOKEN"] = csrf_token
+        if _csrf_value:
+            req_cookies["_csrf"] = _csrf_value
+        async with session.post(f"{base}/api/v1/auth/local", json={
+            "email": self._cfg[CONF_SEERR_GUEST_EMAIL],
+            "password": self._cfg[CONF_SEERR_GUEST_PASS],
+        }, headers=login_hdrs, cookies=req_cookies if req_cookies else None, ssl=ssl) as r:
+            await r.read()
+
+    async def _seerr_session_for_mode(self, user_mode: str, ssl=None):
+        if user_mode == "guest" and self._cfg.get(CONF_SEERR_GUEST_EMAIL):
+            return await self._seerr_guest_sess(ssl=ssl), self._seerr_guest_login
+        return await self._seerr_family_sess(ssl=ssl), self._seerr_family_login
+
     # ── Router ───────────────────────────────────────────────────────────
 
     async def get(self, request: web.Request, service: str, path: str) -> web.Response:
@@ -398,6 +441,7 @@ class ArrStackProxyView(HomeAssistantView):
                 "tracearr":   bool(cfg.get(CONF_TRACEARR_URL)),
                 "trakt":      bool(cfg.get(CONF_TRAKT_CLIENT_ID)),
                 "prowlarr":   bool(cfg.get(CONF_PROWLARR_URL)),
+                "jellyfin":   bool(self._hass.config_entries.async_entries("jellyfin")),
                 "seerrType":  seerr_type,
             })
 
@@ -925,8 +969,12 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "manualimport" and method == "GET":
                 download_id = request.query.get("downloadId", "")
                 movie_id    = request.query.get("movieId", "")
-                params = {"filterExistingFiles": "false"}
-                if download_id: params["downloadId"] = download_id
+                folder      = request.query.get("folder", "")
+                params = {"filterExistingFiles": request.query.get("filterExistingFiles", "true")}
+                if folder:
+                    params["folder"] = folder
+                elif download_id:
+                    params["downloadId"] = download_id
                 if movie_id:    params["movieId"]    = movie_id
                 async with http.get(f"{base}/api/v3/manualimport", headers=hdrs, params=params, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
@@ -1081,6 +1129,16 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(f"{base}/api/v3/episodefile", headers=hdrs, params={"seriesId": series_id}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path.startswith("episodefile/") and method == "DELETE":
+                ef_id = path.split("/", 1)[1]
+                async with http.delete(f"{base}/api/v3/episodefile/{ef_id}", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "episodefile-bulk" and method == "DELETE":
+                body = await request.json()
+                async with http.delete(f"{base}/api/v3/episodefile/bulk", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "recentimports" and method == "GET":
                 async with http.get(f"{base}/api/v3/history", headers=hdrs, params={"pageSize": "100", "sortKey": "date", "sortDir": "desc"}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
@@ -1143,11 +1201,18 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "manualimport" and method == "GET":
                 download_id = request.query.get("downloadId", "")
                 series_id   = request.query.get("seriesId", "")
-                params = {"filterExistingFiles": "false"}
-                if download_id: params["downloadId"] = download_id
+                folder      = request.query.get("folder", "")
+                params = {"filterExistingFiles": request.query.get("filterExistingFiles", "true")}
+                if folder:
+                    params["folder"] = folder
+                elif download_id:
+                    params["downloadId"] = download_id
                 if series_id:   params["seriesId"]   = series_id
+                _LOGGER.debug("arr_stack sonarr MI params=%s", params)
                 async with http.get(f"{base}/api/v3/manualimport", headers=hdrs, params=params, ssl=ssl) as r:
-                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+                    body = await r.read()
+                    _LOGGER.debug("arr_stack sonarr MI → status=%d len=%d", r.status, len(body))
+                    return web.Response(body=body, content_type="application/json", status=r.status)
 
             if path == "manualimport" and method == "POST":
                 body = await request.json()
@@ -1326,8 +1391,12 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "manualimport" and method == "GET":
                 download_id = request.query.get("downloadId", "")
                 movie_id    = request.query.get("movieId", "")
-                params = {"filterExistingFiles": "false"}
-                if download_id: params["downloadId"] = download_id
+                folder      = request.query.get("folder", "")
+                params = {"filterExistingFiles": request.query.get("filterExistingFiles", "true")}
+                if folder:
+                    params["folder"] = folder
+                elif download_id:
+                    params["downloadId"] = download_id
                 if movie_id:    params["movieId"]    = movie_id
                 async with http.get(f"{base}/api/v3/manualimport", headers=hdrs, params=params, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
@@ -1459,6 +1528,16 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(f"{base}/api/v3/episodefile", headers=hdrs, params={"seriesId": series_id}, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
+            if path.startswith("episodefile/") and method == "DELETE":
+                ef_id = path.split("/", 1)[1]
+                async with http.delete(f"{base}/api/v3/episodefile/{ef_id}", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
+            if path == "episodefile-bulk" and method == "DELETE":
+                body = await request.json()
+                async with http.delete(f"{base}/api/v3/episodefile/bulk", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path == "history" and method == "GET":
                 series_id = request.query.get("seriesId", "")
                 async with http.get(f"{base}/api/v3/history/series", headers=hdrs, params={"seriesId": series_id, "pageSize": "200"}, ssl=ssl) as r:
@@ -1521,9 +1600,14 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "manualimport" and method == "GET":
                 download_id = request.query.get("downloadId", "")
                 series_id   = request.query.get("seriesId", "")
-                params = {"filterExistingFiles": "false"}
-                if download_id: params["downloadId"] = download_id
+                folder      = request.query.get("folder", "")
+                params = {"filterExistingFiles": request.query.get("filterExistingFiles", "true")}
+                if folder:
+                    params["folder"] = folder
+                elif download_id:
+                    params["downloadId"] = download_id
                 if series_id:   params["seriesId"]   = series_id
+                if folder:      params["folder"]     = folder
                 async with http.get(f"{base}/api/v3/manualimport", headers=hdrs, params=params, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
@@ -1700,21 +1784,23 @@ class ArrStackProxyView(HomeAssistantView):
 
             # Pending requesty family účtu (přes session cookie) — pro non-admin kartu
             if path == "my_pending":
-                if not self._cfg.get(CONF_SEERR_FAMILY_EMAIL):
+                user_mode = request.query.get("userMode", "family")
+                sess, login_fn = await self._seerr_session_for_mode(user_mode, ssl=ssl)
+                email_key = CONF_SEERR_GUEST_EMAIL if user_mode == "guest" else CONF_SEERR_FAMILY_EMAIL
+                if not self._cfg.get(email_key):
                     return web.json_response({"results": []})
                 try:
                     params = {"filter": "all", "take": "100"}
                     hdrs_json = {"Accept": "application/json"}
-                    fs = await self._seerr_family_sess(ssl=ssl)
-                    async with fs.get(
+                    async with sess.get(
                         f"{base}/api/v1/request",
                         params=params,
                         headers=hdrs_json,
                         ssl=ssl,
                     ) as r:
                         if r.status == 401:
-                            await self._seerr_family_login(fs, ssl=ssl)
-                            async with fs.get(
+                            await login_fn(sess, ssl=ssl)
+                            async with sess.get(
                                 f"{base}/api/v1/request",
                                 params=params,
                                 headers=hdrs_json,
@@ -1730,6 +1816,23 @@ class ArrStackProxyView(HomeAssistantView):
                         return web.json_response({"results": []})
                 except Exception:
                     return web.json_response({"results": []})
+
+            if path == "seerr_accounts":
+                accounts = []
+                if cfg.get(CONF_SEERR_FAMILY_EMAIL):
+                    accounts.append({"id": "family", "email": cfg[CONF_SEERR_FAMILY_EMAIL]})
+                if cfg.get(CONF_SEERR_GUEST_EMAIL):
+                    accounts.append({"id": "guest", "email": cfg[CONF_SEERR_GUEST_EMAIL]})
+                return web.json_response(accounts)
+
+            if path == "ha_users":
+                users = await self._hass.auth.async_get_users()
+                result = []
+                for u in users:
+                    if u.system_generated:
+                        continue
+                    result.append({"id": u.id, "name": u.name or "", "is_admin": u.is_owner or u.is_admin})
+                return web.json_response(result)
 
             if path == "request_delete" and method == "POST":
                 body = await request.json()
@@ -1813,26 +1916,24 @@ class ArrStackProxyView(HomeAssistantView):
                 body = await request.json()
                 user_mode = body.pop("userMode", None)
 
-                # Rodinný účet — použij session cookie místo admin API klíče
-                if user_mode == "family" and self._cfg.get(CONF_SEERR_FAMILY_EMAIL):
-                    fs = await self._seerr_family_sess(ssl=ssl)
-                    fam_hdrs = {"Accept": "application/json", "Content-Type": "application/json"}
-                    csrf_xtra, csrf_ck = self._csrf_from_jar(fs)
-                    fam_hdrs.update(csrf_xtra)
-                    async with fs.post(
+                if user_mode in ("family", "guest"):
+                    sess, login_fn = await self._seerr_session_for_mode(user_mode, ssl=ssl)
+                    um_hdrs = {"Accept": "application/json", "Content-Type": "application/json"}
+                    csrf_xtra, csrf_ck = self._csrf_from_jar(sess)
+                    um_hdrs.update(csrf_xtra)
+                    async with sess.post(
                         f"{base}/api/v1/request",
-                        json=body, headers=fam_hdrs,
+                        json=body, headers=um_hdrs,
                         cookies=csrf_ck or None, ssl=ssl,
                     ) as r:
                         if r.status in (401, 403):
-                            # Session vypršela nebo CSRF mismatch — znovu přihlásit a zkusit
-                            await self._seerr_family_login(fs, ssl=ssl)
-                            csrf_xtra2, csrf_ck2 = self._csrf_from_jar(fs)
-                            fam_hdrs2 = {"Accept": "application/json", "Content-Type": "application/json"}
-                            fam_hdrs2.update(csrf_xtra2)
-                            async with fs.post(
+                            await login_fn(sess, ssl=ssl)
+                            csrf_xtra2, csrf_ck2 = self._csrf_from_jar(sess)
+                            um_hdrs2 = {"Accept": "application/json", "Content-Type": "application/json"}
+                            um_hdrs2.update(csrf_xtra2)
+                            async with sess.post(
                                 f"{base}/api/v1/request",
-                                json=body, headers=fam_hdrs2,
+                                json=body, headers=um_hdrs2,
                                 cookies=csrf_ck2 or None, ssl=ssl,
                             ) as r2:
                                 return web.Response(

@@ -171,7 +171,7 @@ Configure a second Radarr and/or Sonarr instance — useful for HD + 4K setups.
 
 ### Discovery — Overseerr / Jellyseerr *(optional)*
 
-Trending, popular, and upcoming sections are always available without Overseerr. Adding it enables request approvals and family account support.
+Trending, popular, and upcoming sections are always available without Overseerr. Adding it enables request approvals and multi-user support.
 
 | Field | Notes |
 |-------|-------|
@@ -179,6 +179,8 @@ Trending, popular, and upcoming sections are always available without Overseerr.
 | Overseerr / Jellyseerr API key | Find in Settings → General |
 | Family account email | Optional — non-admin account for household members |
 | Family account password | Optional |
+| Guest account email | Optional — separate non-admin account for guests |
+| Guest account password | Optional |
 
 ---
 
@@ -274,9 +276,11 @@ Enables personalised movie and show recommendations in the card based on your Tr
 
 ---
 
-## Family Account
+## Family & Guest Accounts
 
 If you configure a family account (non-admin Overseerr/Jellyseerr user), the card uses that account for media requests made by non-admin HA users. This lets household members request media without admin privileges.
+
+You can optionally add a **guest account** — a second non-admin Overseerr/Jellyseerr user for visitors or temporary users. Once both accounts are configured, a **Users** tab appears in the card editor where you can map specific HA users to either the Family or Guest account. Users not explicitly mapped default to the Family account.
 
 ---
 

@@ -26,6 +26,7 @@ from .const import (
     CONF_SONARR2_URL, CONF_SONARR2_KEY,
     CONF_SEERR_URL, CONF_SEERR_KEY,
     CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS,
+    CONF_SEERR_GUEST_EMAIL, CONF_SEERR_GUEST_PASS,
     CONF_BAZARR_URL, CONF_BAZARR_KEY,
     CONF_PLEX_TOKEN, CONF_PLEX_URL, PLEX_CLIENT_ID,
     CONF_EMBY_URL, CONF_EMBY_KEY,
@@ -328,7 +329,8 @@ async def _test_overseerr(session: aiohttp.ClientSession, url: str, key: str, ss
 
 
 async def _test_overseerr_family(
-    session: aiohttp.ClientSession, url: str, email: str, password: str, ssl=None
+    session: aiohttp.ClientSession, url: str, email: str, password: str, ssl=None,
+    prefix: str = "seerr_family",
 ) -> str | None:
     if not email or not password:
         return None
@@ -362,15 +364,15 @@ async def _test_overseerr_family(
             async with sess.post(login_url, json=payload, headers=hdrs,
                                  cookies=req_cookies if req_cookies else None, ssl=ssl) as r:
                 if r.status in (401, 403):
-                    return "seerr_family_bad_credentials"
+                    return f"{prefix}_bad_credentials"
                 if r.status != 200:
-                    return "seerr_family_login_failed"
+                    return f"{prefix}_login_failed"
                 body = await r.json()
             if body.get("permissions", 0) & 2:
-                return "seerr_family_is_admin"
+                return f"{prefix}_is_admin"
             return None
     except Exception as e:
-        return _log_exc("overseerr_family", login_url, e)
+        return _log_exc(prefix, login_url, e)
 
 
 async def _test_tautulli(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
@@ -798,8 +800,22 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if err:
                         errors[CONF_SEERR_FAMILY_EMAIL] = err
 
+                if not errors:
+                    err = await _test_overseerr_family(
+                        session,
+                        seerr_url,
+                        user_input.get(CONF_SEERR_GUEST_EMAIL, ""),
+                        user_input.get(CONF_SEERR_GUEST_PASS, ""),
+                        ssl=ssl,
+                        prefix="seerr_guest",
+                    )
+                    if err:
+                        errors[CONF_SEERR_GUEST_EMAIL] = err
+
             if not errors:
-                for key in [CONF_SEERR_URL, CONF_SEERR_KEY, CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS]:
+                for key in [CONF_SEERR_URL, CONF_SEERR_KEY,
+                             CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS,
+                             CONF_SEERR_GUEST_EMAIL, CONF_SEERR_GUEST_PASS]:
                     self._data[key] = user_input.get(key, "")
                 return await self._next_step()
 
@@ -808,6 +824,8 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_SEERR_KEY):          str,
             vol.Optional(CONF_SEERR_FAMILY_EMAIL): str,
             vol.Optional(CONF_SEERR_FAMILY_PASS):  str,
+            vol.Optional(CONF_SEERR_GUEST_EMAIL):  str,
+            vol.Optional(CONF_SEERR_GUEST_PASS):   str,
         })
         suggested = self._data if self._data else {
             CONF_SEERR_URL: "http://192.168.1.x:5055",

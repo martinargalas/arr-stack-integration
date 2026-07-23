@@ -37,6 +37,8 @@ CONF_SEERR_URL          = "seerr_url"
 CONF_SEERR_KEY          = "seerr_api_key"
 CONF_SEERR_FAMILY_EMAIL = "seerr_family_email"
 CONF_SEERR_FAMILY_PASS  = "seerr_family_password"
+CONF_SEERR_GUEST_EMAIL  = "seerr_guest_email"
+CONF_SEERR_GUEST_PASS   = "seerr_guest_password"
 
 CONF_BAZARR_URL = "bazarr_url"
 CONF_BAZARR_KEY = "bazarr_api_key"
