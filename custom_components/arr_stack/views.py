@@ -4,12 +4,26 @@ import base64
 import itertools
 import logging
 import xmlrpc.client as _xmlrpc
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 import aiohttp
 from aiohttp import web
 import yarl
 
 _LOGGER = logging.getLogger(__name__)
+
+def _host_port(url: str) -> str:
+    """Normalised "host:port" for comparing two configs that name the same server."""
+    if not url:
+        return ""
+    try:
+        p = urlparse(url if "://" in url else f"http://{url}")
+        host = (p.hostname or "").lower()
+        port = p.port or (443 if p.scheme == "https" else 80)
+        return f"{host}:{port}" if host else ""
+    except Exception:
+        return ""
+
+
 
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -99,6 +113,42 @@ async def _tracearr_get_access_token(http: aiohttp.ClientSession, tracearr_url: 
 
     return None
 
+def _tracearr_rotate_cookie(hass, resp, stored: str) -> None:
+    """Keep the stored session cookie current.
+
+    Better Auth rotates its session token as it is used and returns the new one
+    in Set-Cookie. Ignoring that would let the stored value go stale and the
+    card would start returning 401 again a week later.
+    """
+    if not hass or not stored:
+        return
+    try:
+        set_cookies = resp.headers.getall("Set-Cookie", [])
+    except Exception:
+        return
+    if not set_cookies:
+        return
+    jar = {}
+    for pair in [c.strip() for c in stored.split(";") if "=" in c]:
+        k, _, v = pair.partition("=")
+        jar[k.strip()] = v
+    changed = False
+    for sc in set_cookies:
+        k, _, v = sc.split(";")[0].partition("=")
+        k = k.strip()
+        if k in jar and jar[k] != v:
+            jar[k] = v
+            changed = True
+    if not changed:
+        return
+    entries = hass.config_entries.async_entries("arr_stack")
+    if entries:
+        new_cookie = "; ".join(f"{k}={v}" for k, v in jar.items())
+        hass.config_entries.async_update_entry(
+            entries[0], data={**entries[0].data, "tracearr_session_cookie": new_cookie}
+        )
+
+
 from .const import (
     DOMAIN,
     CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
@@ -119,13 +169,17 @@ from .const import (
     CONF_EMBY_URL, CONF_EMBY_KEY,
     CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
     CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY,
-    CONF_TRACEARR_URL, CONF_TRACEARR_KEY, CONF_TRACEARR_REFRESH_TOKEN,
+    CONF_TRACEARR_URL, CONF_TRACEARR_KEY, CONF_TRACEARR_REFRESH_TOKEN, CONF_TRACEARR_SESSION_COOKIE,
     CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET,
     CONF_TRAKT_ACCESS_TOKEN, CONF_TRAKT_REFRESH_TOKEN, CONF_TRAKT_EXPIRES_AT,
     TRAKT_API_BASE, TRAKT_API_VER,
     CONF_PROWLARR_URL, CONF_PROWLARR_KEY,
+    CONF_MAINTAINERR_URL,
     CONF_SKIP_SSL_VERIFY,
     CONF_DEBUG_LOGGING,
+    CONF_TMDB_KEY,
+    CONF_METRICS_OPT_OUT,
+    CONF_SUGGESTARR_URL, CONF_SUGGESTARR_USER, CONF_SUGGESTARR_PASS,
 )
 
 async def _plex_detect_server(session: aiohttp.ClientSession, token: str) -> str:
@@ -202,6 +256,10 @@ class ArrStackProxyView(HomeAssistantView):
         # Cache pro Trakt recommendations (TTL 30 min)
         self._trakt_cache: list | None = None
         self._trakt_cache_ts: float = 0.0
+        self._sa_open: bool | None = None   # None = not probed yet
+        self._sa_token: str | None = None
+        self._sa_token_ts: float = 0.0
+        self._sa_run_ts: float = 0.0
 
     @property
     def _cfg(self) -> dict:
@@ -441,8 +499,30 @@ class ArrStackProxyView(HomeAssistantView):
                 "tracearr":   bool(cfg.get(CONF_TRACEARR_URL)),
                 "trakt":      bool(cfg.get(CONF_TRAKT_CLIENT_ID)),
                 "prowlarr":   bool(cfg.get(CONF_PROWLARR_URL)),
+                "maintainerr": bool(cfg.get(CONF_MAINTAINERR_URL)),
+                # False means this install still rides the bundled shared key —
+                # kept working during the transition, but it is the one we want
+                # users to replace with their own.
+                "tmdbOwnKey": bool(cfg.get(CONF_TMDB_KEY, "").strip()),
+                # The card checks this before sending its anonymous ping
+                "metrics": not bool(cfg.get(CONF_METRICS_OPT_OUT, False)),
+                "suggestarr": bool(cfg.get(CONF_SUGGESTARR_URL)),
                 "jellyfin":   bool(self._hass.config_entries.async_entries("jellyfin")),
                 "seerrType":  seerr_type,
+                # Host:port of each arr instance. The card cannot otherwise tell
+                # which of its instances a Maintainerr server refers to — the two
+                # use unrelated id spaces — so it matches them on the address and
+                # can then label everything with the user's own Seerr names.
+                "arrHosts": {
+                    key: _host_port(cfg.get(conf, ""))
+                    for key, conf in (
+                        ("radarr",  CONF_RADARR_URL),
+                        ("radarr2", CONF_RADARR2_URL),
+                        ("sonarr",  CONF_SONARR_URL),
+                        ("sonarr2", CONF_SONARR2_URL),
+                    )
+                    if cfg.get(conf)
+                },
             })
 
         # ════════════════════════════════════════════
@@ -896,7 +976,14 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.delete(
                     f"{base}/api/v3/movie/{movie_id}",
                     headers=hdrs,
-                    params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
+                    # Radarr names this addImportExclusion, Sonarr addImportListExclusion.
+                    # Sending both keeps the exclusion working across versions — the
+                    # unknown one is ignored, and without it import lists re-add the movie.
+                    params={
+                        "deleteFiles": delete_files,
+                        "addImportExclusion": add_exclusion,
+                        "addImportListExclusion": add_exclusion,
+                    },
                     timeout=aiohttp.ClientTimeout(total=60),
                     ssl=ssl,
                 ) as r:
@@ -937,6 +1024,12 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "movie-editor" and method == "DELETE":
                 body = await request.json()
+                # Radarr calls it addImportExclusion, Sonarr addImportListExclusion;
+                # send both so the list exclusion is really created either way.
+                _excl = body.get("addImportExclusion", body.get("addImportListExclusion"))
+                if _excl is not None:
+                    body["addImportExclusion"] = _excl
+                    body["addImportListExclusion"] = _excl
                 async with http.delete(f"{base}/api/v3/movie/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
@@ -1156,6 +1249,12 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "series-editor" and method == "DELETE":
                 body = await request.json()
+                # Radarr calls it addImportExclusion, Sonarr addImportListExclusion;
+                # send both so the list exclusion is really created either way.
+                _excl = body.get("addImportExclusion", body.get("addImportListExclusion"))
+                if _excl is not None:
+                    body["addImportExclusion"] = _excl
+                    body["addImportListExclusion"] = _excl
                 async with http.delete(f"{base}/api/v3/series/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
@@ -1329,7 +1428,14 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.delete(
                     f"{base}/api/v3/movie/{movie_id}",
                     headers=hdrs,
-                    params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
+                    # Radarr names this addImportExclusion, Sonarr addImportListExclusion.
+                    # Sending both keeps the exclusion working across versions — the
+                    # unknown one is ignored, and without it import lists re-add the movie.
+                    params={
+                        "deleteFiles": delete_files,
+                        "addImportExclusion": add_exclusion,
+                        "addImportListExclusion": add_exclusion,
+                    },
                     timeout=aiohttp.ClientTimeout(total=60),
                     ssl=ssl,
                 ) as r:
@@ -1358,6 +1464,12 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "movie-editor" and method == "DELETE":
                 body = await request.json()
+                # Radarr calls it addImportExclusion, Sonarr addImportListExclusion;
+                # send both so the list exclusion is really created either way.
+                _excl = body.get("addImportExclusion", body.get("addImportListExclusion"))
+                if _excl is not None:
+                    body["addImportExclusion"] = _excl
+                    body["addImportListExclusion"] = _excl
                 async with http.delete(f"{base}/api/v3/movie/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
@@ -1574,6 +1686,12 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "series-editor" and method == "DELETE":
                 body = await request.json()
+                # Radarr calls it addImportExclusion, Sonarr addImportListExclusion;
+                # send both so the list exclusion is really created either way.
+                _excl = body.get("addImportExclusion", body.get("addImportListExclusion"))
+                if _excl is not None:
+                    body["addImportExclusion"] = _excl
+                    body["addImportListExclusion"] = _excl
                 async with http.delete(f"{base}/api/v3/series/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
                     return web.Response(body=await r.read(), content_type="application/json", status=r.status)
 
@@ -2072,6 +2190,37 @@ class ArrStackProxyView(HomeAssistantView):
                         item["_thumbUrl"] = f"{base}{thumb}?X-Plex-Token={token}" if thumb else ""
                     return web.json_response(data, status=r.status)
 
+            # GET plex/metadata?ratingKey=X → one library item.
+            # Used to read a show's Guid array: an episode session only carries
+            # the episode's ids, and with the modern Plex agent grandparentGuid
+            # is a plex:// hash rather than a tvdb/tmdb id.
+            if path == "metadata" and method == "GET":
+                rating_key = request.rel_url.query.get("ratingKey", "").strip()
+                if not rating_key.isdigit():
+                    return web.json_response({"error": "ratingKey required"}, status=400)
+                async with http.get(
+                    f"{base}/library/metadata/{rating_key}",
+                    headers=plex_hdrs,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                    ssl=ssl,
+                ) as r:
+                    return web.json_response(await r.json(), status=r.status)
+
+            # GET plex/children?ratingKey=X → the seasons of a show. Maintainerr
+            # collections built from season rules key on the season's own item,
+            # not the show's, so the card needs those ids to target them.
+            if path == "children" and method == "GET":
+                rating_key = request.rel_url.query.get("ratingKey", "").strip()
+                if not rating_key.isdigit():
+                    return web.json_response({"error": "ratingKey required"}, status=400)
+                async with http.get(
+                    f"{base}/library/metadata/{rating_key}/children",
+                    headers=plex_hdrs,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                    ssl=ssl,
+                ) as r:
+                    return web.json_response(await r.json(), status=r.status)
+
             # POST plex/player → player control (play/pause/seek/stop)
             # Body: { action, machineIdentifier, offset? (ms), playerUrl? }
             if path == "player" and method == "POST":
@@ -2285,7 +2434,10 @@ class ArrStackProxyView(HomeAssistantView):
                         items = await _plex_scan_sections(all_guids, section_type="show")
 
                 if not items:
-                    return web.json_response({"error": "not_found"}, status=404)
+                    # Ordinary answer, not a failure: Plex, Jellyfin and Emby can
+                    # each hold different libraries, so a title being absent from
+                    # one of them is expected. Callers check for a missing key.
+                    return web.json_response({"plex_key": None})
                 item = items[0]
                 return web.json_response({
                     "plex_key": f"/library/metadata/{item.get('ratingKey')}",
@@ -2313,7 +2465,10 @@ class ArrStackProxyView(HomeAssistantView):
         # TMDB — discover proxy (fallback when Overseerr not configured)
         # ════════════════════════════════════════════
         elif service == "tmdb":
-            from .const import TMDB_API_KEY, TMDB_BASE as _TMDB_BASE
+            from .const import TMDB_API_KEY as _TMDB_FALLBACK, TMDB_BASE as _TMDB_BASE
+            # A key the user entered wins; entries made before it was
+            # configurable keep working on the bundled one.
+            TMDB_API_KEY = cfg.get(CONF_TMDB_KEY, "").strip() or _TMDB_FALLBACK
 
             def _tmdb_item(item, force_type=None):
                 mt = force_type or item.get("media_type", "movie")
@@ -2518,24 +2673,31 @@ class ArrStackProxyView(HomeAssistantView):
 
             # Library, stats, rules and sessions endpoints require admin JWT; public endpoints use the public key
             is_library = path.startswith("v1/library") or path.startswith("v1/stats") or path.startswith("v1/rules") or path.startswith("v1/sessions")
-            if is_library:
-                refresh_token = cfg.get(CONF_TRACEARR_REFRESH_TOKEN, "")
-                entry_id = next(iter(self._hass.config_entries.async_entries("arr_stack")), None)
-                entry_id_str = entry_id.entry_id if entry_id else "default"
-                plex_token = cfg.get(CONF_PLEX_TOKEN, "")
-                admin_token = await _tracearr_get_access_token(http, tracearr_url, entry_id_str, refresh_token, ssl=ssl, hass=self._hass, plex_token=plex_token)
-                if not admin_token:
-                    return web.json_response({"error": "Tracearr admin token unavailable — set tracearr_refresh_token in config"}, status=503)
-                auth_header = f"Bearer {admin_token}"
-            else:
-                auth_header = f"Bearer {tracearr_key}"
-
-            params = dict(request.rel_url.query)
+            session_cookie = cfg.get(CONF_TRACEARR_SESSION_COOKIE, "")
             headers = {
-                "Authorization": auth_header,
                 "Accept": "application/json",
                 "Content-Type": "application/json",
             }
+            if is_library:
+                # Accounts signed in through Plex never get a JWT — Tracearr's own
+                # web app runs on the Better Auth session cookie, and the API takes
+                # it. So a stored cookie wins; the JWT path stays for accounts that
+                # do have one (Jellyfin/Emby API-key logins).
+                if session_cookie:
+                    headers["Cookie"] = session_cookie
+                else:
+                    refresh_token = cfg.get(CONF_TRACEARR_REFRESH_TOKEN, "")
+                    entry_id = next(iter(self._hass.config_entries.async_entries("arr_stack")), None)
+                    entry_id_str = entry_id.entry_id if entry_id else "default"
+                    plex_token = cfg.get(CONF_PLEX_TOKEN, "")
+                    admin_token = await _tracearr_get_access_token(http, tracearr_url, entry_id_str, refresh_token, ssl=ssl, hass=self._hass, plex_token=plex_token)
+                    if not admin_token:
+                        return web.json_response({"error": "Tracearr admin auth unavailable — set tracearr_session_cookie (or tracearr_refresh_token) in config"}, status=503)
+                    headers["Authorization"] = f"Bearer {admin_token}"
+            else:
+                headers["Authorization"] = f"Bearer {tracearr_key}"
+
+            params = dict(request.rel_url.query)
 
             target_url = f"{tracearr_url}/api/{path}"
             if method == "GET":
@@ -2547,6 +2709,7 @@ class ArrStackProxyView(HomeAssistantView):
                     ssl=ssl,
                 ) as r:
                     raw = await r.read()
+                    _tracearr_rotate_cookie(self._hass, r, session_cookie)
                     ct = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
                     return web.Response(body=raw, content_type=ct, status=r.status)
             elif method == "POST":
@@ -2559,6 +2722,7 @@ class ArrStackProxyView(HomeAssistantView):
                     ssl=ssl,
                 ) as r:
                     raw = await r.read()
+                    _tracearr_rotate_cookie(self._hass, r, session_cookie)
                     ct = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
                     return web.Response(body=raw, content_type=ct, status=r.status)
             elif method == "PATCH":
@@ -2571,6 +2735,7 @@ class ArrStackProxyView(HomeAssistantView):
                     ssl=ssl,
                 ) as r:
                     raw = await r.read()
+                    _tracearr_rotate_cookie(self._hass, r, session_cookie)
                     ct = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
                     return web.Response(body=raw, content_type=ct, status=r.status)
             elif method == "DELETE":
@@ -2581,6 +2746,7 @@ class ArrStackProxyView(HomeAssistantView):
                     ssl=ssl,
                 ) as r:
                     raw = await r.read()
+                    _tracearr_rotate_cookie(self._hass, r, session_cookie)
                     ct = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
                     return web.Response(body=raw, content_type=ct, status=r.status)
 
@@ -2601,6 +2767,9 @@ class ArrStackProxyView(HomeAssistantView):
 
         elif service == "trakt":
             return await self._handle_trakt(request, path, method, cfg, http, ssl)
+
+        elif service == "suggestarr":
+            return await self._handle_suggestarr(request, path, method, cfg, http, ssl)
 
         # ════════════════════════════════════════════
         # Prowlarr
@@ -2806,6 +2975,76 @@ class ArrStackProxyView(HomeAssistantView):
                                         api_token = servers[0].get("AccessToken", "")
                         except Exception:
                             pass
+                # GET jellyfin/lookup?tmdbId=X | tvdbId=X → the item's Jellyfin id.
+                # Jellystat keys everything on it, and it is the only identifier
+                # that survives a localised library.
+                if path == "lookup" and method == "GET":
+                    tmdb = request.rel_url.query.get("tmdbId")
+                    tvdb = request.rel_url.query.get("tvdbId")
+                    if not server_url or not api_token:
+                        return web.json_response({"error": "jellyfin_unavailable"}, status=503)
+                    if not tmdb and not tvdb:
+                        return web.json_response({"error": "tmdbId or tvdbId required"}, status=400)
+                    hdrs = {"X-Emby-Token": api_token, "Accept": "application/json"}
+                    wanted = [("tmdb", str(tmdb))] if tmdb else []
+                    if tvdb:
+                        wanted.append(("tvdb", str(tvdb)))
+
+                    def _hit(item):
+                        """True when the item really carries one of the ids asked for.
+
+                        Jellyfin silently drops query params it does not recognise,
+                        so an unfiltered first-item-in-library answer looks exactly
+                        like a match. Checking ProviderIds is what tells them apart.
+                        """
+                        pids = {k.lower(): str(v) for k, v in (item.get("ProviderIds") or {}).items()}
+                        return any(pids.get(k) == v for k, v in wanted)
+
+                    def _found(item):
+                        return web.json_response({
+                            "id": item.get("Id"),
+                            "name": item.get("Name"),
+                            "type": item.get("Type"),
+                        })
+
+                    base = {
+                        "recursive": "true",
+                        "includeItemTypes": "Movie,Series",
+                        "fields": "ProviderIds",
+                    }
+                    for key, val in wanted:
+                        async with http.get(
+                            f"{server_url}/Items",
+                            headers=hdrs,
+                            params={**base, "anyProviderIdEquals": f"{key}.{val}", "limit": "5"},
+                            timeout=aiohttp.ClientTimeout(total=10),
+                            ssl=ssl,
+                        ) as r:
+                            for item in ((await r.json(content_type=None)) or {}).get("Items") or []:
+                                if _hit(item):
+                                    return _found(item)
+
+                    # Filter did not work — page through the library instead. Bounded
+                    # at 10k items so a huge library cannot stall the request.
+                    for start in range(0, 10000, 500):
+                        async with http.get(
+                            f"{server_url}/Items",
+                            headers=hdrs,
+                            params={**base, "startIndex": str(start), "limit": "500"},
+                            timeout=aiohttp.ClientTimeout(total=20),
+                            ssl=ssl,
+                        ) as r:
+                            items = ((await r.json(content_type=None)) or {}).get("Items") or []
+                        for item in items:
+                            if _hit(item):
+                                return _found(item)
+                        if len(items) < 500:
+                            break
+                    # Not an error: Jellyfin and Plex can hold different
+                    # libraries, so a title missing here is an ordinary answer.
+                    # A 404 would only litter the browser console.
+                    return web.json_response({"id": None})
+
                 # coordinator stored in entry.runtime_data (HA 2024+ pattern)
                 sessions = []
                 if runtime is not None:
@@ -2954,6 +3193,51 @@ class ArrStackProxyView(HomeAssistantView):
                 _LOGGER.warning("arr_stack emby error: %s", exc)
                 return web.json_response({"error": str(exc)}, status=502)
 
+        elif service == "maintainerr":
+            maint_url = cfg.get(CONF_MAINTAINERR_URL, "").rstrip("/")
+            if not maint_url:
+                return web.json_response({"_notConfigured": True})
+            target = f"{maint_url}/api/{path}"
+            qs = request.query_string
+            if qs:
+                target += f"?{qs}"
+            if method == "GET":
+                async with http.get(target, ssl=ssl, timeout=aiohttp.ClientTimeout(total=120)) as r:
+                    body = await r.read()
+                    return web.Response(body=body, content_type=r.content_type or "application/json", status=r.status)
+            elif method == "POST":
+                try:
+                    data = await request.json()
+                except Exception:
+                    data = None
+                kw = {"json": data} if data else {}
+                async with http.post(target, ssl=ssl, timeout=aiohttp.ClientTimeout(total=120), **kw) as r:
+                    body = await r.read()
+                    return web.Response(body=body, content_type=r.content_type or "application/json", status=r.status)
+            elif method == "PUT":
+                try:
+                    data = await request.json()
+                except Exception:
+                    data = None
+                kw = {"json": data} if data else {}
+                async with http.put(target, ssl=ssl, timeout=aiohttp.ClientTimeout(total=120), **kw) as r:
+                    body = await r.read()
+                    return web.Response(body=body, content_type=r.content_type or "application/json", status=r.status)
+            elif method == "DELETE":
+                async with http.delete(target, ssl=ssl, timeout=aiohttp.ClientTimeout(total=120)) as r:
+                    body = await r.read()
+                    return web.Response(body=body, content_type=r.content_type or "application/json", status=r.status)
+            elif method == "PATCH":
+                try:
+                    data = await request.json()
+                except Exception:
+                    data = None
+                kw = {"json": data} if data else {}
+                async with http.patch(target, ssl=ssl, timeout=aiohttp.ClientTimeout(total=120), **kw) as r:
+                    body = await r.read()
+                    return web.Response(body=body, content_type=r.content_type or "application/json", status=r.status)
+            return web.json_response({"error": "unsupported method"}, status=405)
+
         return web.json_response({"error": "unknown service or path"}, status=404)
 
     # ── Trakt proxy ───────────────────────────────────────────────────────────
@@ -3012,6 +3296,113 @@ class ArrStackProxyView(HomeAssistantView):
         except Exception as e:
             _LOGGER.warning("arr_stack Trakt token refresh failed: %s", e)
         return access_token
+
+    async def _suggestarr_headers(self, base: str, cfg: dict, session: aiohttp.ClientSession, ssl) -> dict:
+        """Auth headers for SuggestArr, or an empty dict when none are needed.
+
+        The install may run with AUTH_MODE=local_bypass or disabled, in which
+        case Home Assistant's own IP is trusted and no login exists to perform.
+        The cached probe result decides which of the two worlds we are in.
+        """
+        user = (cfg.get(CONF_SUGGESTARR_USER) or "").strip()
+        password = cfg.get(CONF_SUGGESTARR_PASS) or ""
+
+        if self._sa_open is None:
+            try:
+                async with session.get(
+                    f"{base}/api/jobs/suggestions?status=awaiting_approval&per_page=1",
+                    timeout=aiohttp.ClientTimeout(total=10),
+                    ssl=ssl,
+                ) as r:
+                    self._sa_open = r.status != 401
+            except Exception:
+                self._sa_open = False
+        if self._sa_open:
+            return {}
+
+        if not user:
+            return {}
+
+        import time as _t
+        if self._sa_token and _t.monotonic() < self._sa_token_ts + 600:
+            return {"Authorization": f"Bearer {self._sa_token}"}
+
+        try:
+            async with session.post(
+                f"{base}/api/auth/login",
+                json={"username": user, "password": password},
+                timeout=aiohttp.ClientTimeout(total=10),
+                ssl=ssl,
+            ) as r:
+                if r.status == 200:
+                    tok = (await r.json()).get("access_token")
+                    if tok:
+                        self._sa_token = tok
+                        self._sa_token_ts = _t.monotonic()
+                        return {"Authorization": f"Bearer {tok}"}
+                _LOGGER.warning("arr_stack SuggestArr login failed: %s", r.status)
+        except Exception as e:
+            _LOGGER.warning("arr_stack SuggestArr login error: %s", e)
+        return {}
+
+    async def _handle_suggestarr(self, request, path: str, method: str, cfg: dict, session: aiohttp.ClientSession, ssl) -> web.Response:
+        base = (cfg.get(CONF_SUGGESTARR_URL) or "").rstrip("/")
+        if not base:
+            return web.json_response({"error": "SuggestArr not configured"}, status=503)
+
+        headers = await self._suggestarr_headers(base, cfg, session, ssl)
+
+        async def _call(m, url, payload=None, retry=True, retry_5xx=True):
+            async with session.request(
+                m, url, headers={**headers, "Content-Type": "application/json"},
+                json=payload, timeout=aiohttp.ClientTimeout(total=20), ssl=ssl,
+            ) as r:
+                body = await r.read()
+                if r.status == 401 and retry:
+                    # Token expired mid-flight — drop it and go once more
+                    self._sa_token = None
+                    fresh = await self._suggestarr_headers(base, cfg, session, ssl)
+                    headers.clear(); headers.update(fresh)
+                    return await _call(m, url, payload, retry=False)
+                if r.status >= 500 and retry_5xx and m == "GET":
+                    # SuggestArr answers 500 while one of its jobs holds the
+                    # SQLite write lock. It clears in well under a second, and
+                    # a GET is safe to repeat.
+                    await asyncio.sleep(1.5)
+                    return await _call(m, url, payload, retry=retry, retry_5xx=False)
+                return r.status, body
+
+        # GET suggestarr/suggestions → the pending recommendations
+        if path == "suggestions" and method == "GET":
+            per_page = request.query.get("per_page", "40")
+            status, body = await _call(
+                "GET",
+                f"{base}/api/jobs/suggestions?status=awaiting_approval&page=1&per_page={per_page}",
+            )
+            if status != 200:
+                return web.json_response({"error": "suggestarr_error", "status": status}, status=502)
+            return web.Response(body=body, content_type="application/json")
+
+        # POST suggestarr/{blacklist|reject} {ids:[…]} → Skip / Seen
+        if path in ("blacklist", "reject") and method == "POST":
+            payload = await request.json()
+            status, body = await _call("POST", f"{base}/api/jobs/suggestions/{path}", payload)
+            return web.Response(body=body, content_type="application/json", status=status)
+
+        # POST suggestarr/refresh → ask for a new batch, at most once in five minutes.
+        # A run walks the whole watch history and makes dozens of TMDB calls, so
+        # firing it on every few clicks would be rude to both services. Five
+        # minutes still lets a second batch be asked for within one sitting.
+        if path == "refresh" and method == "POST":
+            import time as _t
+            now = _t.monotonic()
+            if now < self._sa_run_ts + 300:
+                return web.json_response({"ok": False, "reason": "cooldown"})
+            self._sa_run_ts = now
+            status, _body = await _call("POST", f"{base}/api/automation/force_run", {})
+            return web.json_response({"ok": status in (200, 202)})
+
+        return web.json_response({"error": "unknown path"}, status=404)
 
     async def _handle_trakt(self, request, path: str, method: str, cfg: dict, session: aiohttp.ClientSession, ssl) -> web.Response:
         token = await self._trakt_access_token(cfg, session)

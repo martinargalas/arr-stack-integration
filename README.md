@@ -14,7 +14,22 @@ A Home Assistant custom integration that acts as a secure server-side proxy betw
 
 ### Supported services
 
-<p><img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/radarr.png" height="36" title="Radarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sonarr.png" height="36" title="Sonarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/bazarr.png" height="36" title="Bazarr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/qbittorrent.png" height="36" title="qBittorrent"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/deluge.png" height="36" title="Deluge"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/rutorrent.png" height="36" title="rTorrent"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sabnzbd.png" height="36" title="SABnzbd"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/nzbget.png" height="36" title="NZBGet"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/overseerr.png" height="36" title="Overseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyseerr.png" height="36" title="Jellyseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tmdb.png" height="36" title="TMDB"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/prowlarr.png" height="36" title="Prowlarr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/plex.png" height="36" title="Plex"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyfin.png" height="36" title="Jellyfin"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/emby.png" height="36" title="Emby"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/kodi.png" height="36" title="Kodi"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tautulli.png" height="36" title="Tautulli"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellystat.png" height="36" title="Jellystat"/> <img src="https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/tracearr.svg" height="36" title="Tracearr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/trakt.png" height="36" title="Trakt"/></p>
+<p><img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/radarr.png" height="36" title="Radarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sonarr.png" height="36" title="Sonarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/bazarr.png" height="36" title="Bazarr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/qbittorrent.png" height="36" title="qBittorrent"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/deluge.png" height="36" title="Deluge"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/rutorrent.png" height="36" title="rTorrent"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sabnzbd.png" height="36" title="SABnzbd"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/nzbget.png" height="36" title="NZBGet"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/overseerr.png" height="36" title="Overseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyseerr.png" height="36" title="Jellyseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tmdb.png" height="36" title="TMDB"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/prowlarr.png" height="36" title="Prowlarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/maintainerr.png" height="36" title="Maintainerr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/plex.png" height="36" title="Plex"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyfin.png" height="36" title="Jellyfin"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/emby.png" height="36" title="Emby"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/kodi.png" height="36" title="Kodi"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tautulli.png" height="36" title="Tautulli"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellystat.png" height="36" title="Jellystat"/> <img src="https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/tracearr.svg" height="36" title="Tracearr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/trakt.png" height="36" title="Trakt"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/suggest-arr.png" height="36" title="SuggestArr"/></p>
+
+---
+
+> [!IMPORTANT]
+> ### Your own TMDB API key — needed by 1 September 2026
+>
+> **If you use Seerr (Overseerr / Jellyseerr), this does not affect you.** Posters, search and title details all come through Seerr, and nothing changes for you.
+>
+> Everyone else needs a free TMDB API key by **1 September 2026**. Until then everything keeps working as it always has. The reason is simple: the card is going through the official HACS review, and the rules there do not allow a shared key to be built into the code, so it has to go.
+>
+> Getting one takes a minute at [themoviedb.org](https://www.themoviedb.org) → Settings → API — it is free and no payment details are asked for. Then paste it into **Settings → Devices & Services → Arr Stack → Reconfigure → Discovery**.
+>
+> Without a key after that date the posters, ratings, cast, trailers and the Trending and Popular rows stop loading. Everything tied to your own libraries — Radarr, Sonarr, downloads, the calendar — carries on regardless.
+>
+> Sorry for the errand. The card never asked you for anything before, and the notice disappears on its own once a key is filled in or Seerr is set up.
 
 ---
 
@@ -37,7 +52,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | rTorrent / ruTorrent | Torrent download client | Optional |
 | SABnzbd | Usenet download client | Optional |
 | NZBGet | Usenet download client | Optional |
-| Overseerr / Jellyseerr | Media discovery & requests | Optional |
+| Seerr (Overseerr / Jellyseerr) | Media discovery & requests | Optional |
 | Bazarr | Subtitle management | Optional |
 | Plex | Stream monitoring & playback control | Optional |
 | Jellyfin | Stream monitoring & playback control (via HA integration — no config needed here) | Optional |
@@ -47,7 +62,9 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Jellystat | Watch history and statistics | Optional |
 | Tracearr *(beta)* | Watch history, statistics, and usage analytics | Optional |
 | Prowlarr | Indexer management and search statistics | Optional |
-| Trakt | Personalised movie & show recommendations | Optional |
+| Trakt | Personalised recommendations — needs a paid VIP account | Optional |
+| SuggestArr | Free recommendations from what you have watched | Optional |
+| Maintainerr | Automatic library cleanup, with countdowns shown across the card | Optional |
 | Gluetun | VPN status in the downloads panel | Optional |
 
 > **Note:** Plex, Jellyfin, and Kodi also require their official Home Assistant integrations to be installed and connected — [Plex](https://www.home-assistant.io/integrations/plex/), [Jellyfin](https://www.home-assistant.io/integrations/jellyfin/), [Kodi](https://www.home-assistant.io/integrations/kodi/). The card uses these HA integrations for live stream detection. Emby does not have an official HA integration — configure it directly in Arr Stack instead.
@@ -96,11 +113,12 @@ Choose which optional services you want to configure. Only the selected steps wi
 | Usenet clients | SABnzbd, NZBGet |
 | 2nd instances | Radarr 2, Sonarr 2 |
 | Bazarr | Bazarr |
-| Discovery | Overseerr / Jellyseerr |
+| Discovery | TMDB, Seerr, family and guest accounts |
 | Plex / Emby | Plex, Emby |
 | Streaming stats | Tautulli, Jellystat, Tracearr |
 | Prowlarr | Prowlarr |
-| Trakt | Trakt |
+| Recommendations | Trakt, SuggestArr |
+| Maintainerr | Maintainerr |
 | Gluetun | Gluetun |
 
 ---
@@ -169,18 +187,36 @@ Configure a second Radarr and/or Sonarr instance — useful for HD + 4K setups.
 
 ---
 
-### Discovery — Overseerr / Jellyseerr *(optional)*
+### Discovery — TMDB, Seerr, accounts *(optional)*
 
-Trending, popular, and upcoming sections are always available without Overseerr. Adding it enables request approvals and multi-user support.
+Where the card gets posters, metadata and requests from. This step has four parts, all optional.
+
+**TMDB** — needed only if you do **not** use Seerr. See the notice at the top of this page: fill in your own key before **1 September 2026** and posters, ratings, cast, trailers and the Trending and Popular rows keep working. With Seerr configured you can skip this section entirely.
 
 | Field | Notes |
 |-------|-------|
-| Overseerr / Jellyseerr URL | `http://192.168.1.10:5055` |
-| Overseerr / Jellyseerr API key | Find in Settings → General |
-| Family account email | Optional — non-admin account for household members |
-| Family account password | Optional |
-| Guest account email | Optional — separate non-admin account for guests |
-| Guest account password | Optional |
+| TMDB API key | Free from [themoviedb.org](https://www.themoviedb.org) → Settings → API |
+
+**Seerr** — Overseerr and Jellyseerr have merged under the name Seerr; both existing installations work here unchanged. Without it, movies and shows are added straight to Radarr and Sonarr; with it you get requests, approvals and multi-user support.
+
+| Field | Notes |
+|-------|-------|
+| Seerr URL | `http://192.168.1.10:5055` |
+| Seerr API key | Find in Seerr → Settings → General |
+
+**Family account** — a non-admin Seerr account shared by the household. Requests made by non-admin Home Assistant users go through it, so they appear in Seerr as ordinary requests waiting for approval rather than as admin actions.
+
+| Field | Notes |
+|-------|-------|
+| Family account email | Login email of that Seerr account |
+| Family account password | Password for it |
+
+**Guest account** — a second non-admin Seerr account for visitors or anyone you would rather keep separate from the household. With both accounts filled in, a **Users** tab appears in the card editor where each Home Assistant user is assigned to one or the other; anyone not assigned falls back to the family account.
+
+| Field | Notes |
+|-------|-------|
+| Guest account email | Login email of that Seerr account |
+| Guest account password | Password for it |
 
 ---
 
@@ -215,22 +251,27 @@ Trending, popular, and upcoming sections are always available without Overseerr.
 | Jellystat API key | Find in Jellystat → Settings |
 | Tracearr URL | `http://192.168.1.10:3102` — default port is 3102 |
 | Tracearr API key | Find in Tracearr → Settings → API |
-| Tracearr refresh token | See below |
+| Tracearr session cookie | Required for statistics — see below |
+| Tracearr refresh token | Older alternative to the cookie — see below |
 
 > Tautulli also powers **account sharing detection** — alerts when the same user streams from multiple IPs simultaneously.
 
 > **Tracearr is currently in beta.** Some features may be incomplete or change in future updates.
 
-#### Tracearr refresh token
+#### Tracearr session cookie
 
-The Tracearr API key (from Settings → API) is sufficient for read-only access. Some analytics features require an additional **refresh token**, which is the long-lived authentication token Tracearr issues when you log in.
+The API key alone only reaches Tracearr's public endpoints. Watch history, library and storage statistics — everything the card actually shows — sit behind the same login its own web interface uses, so one more field is needed.
 
 **How to get it:**
 
-1. Open Tracearr in your browser and log in (works with both local username/password and Plex Sign-In)
-2. Open browser Developer Tools: **F12** → **Application** tab → **Local Storage** → select your Tracearr URL
-3. Find the entry named `refreshToken` and copy its value
-4. Paste it into the **Tracearr refresh token** field in the integration setup
+1. Open Tracearr in your browser and sign in as you normally would
+2. Press **F12** → **Application** tab → **Cookies** → select your Tracearr address
+3. Find the entry whose name starts with `better-auth.session_token` and copy **both the name and the value**, written as `name=value`
+4. Paste that into the **Tracearr session cookie** field
+
+The cookie lasts as long as your Tracearr login does. If the statistics stop loading one day, sign in again and copy a fresh one.
+
+> **Refresh token** — the older way of doing the same thing, kept for accounts that already have one. It is being retired and will stop working, so use the session cookie. Accounts that sign in through Plex never had a refresh token to begin with; for those the cookie has always been the only way.
 
 ---
 
@@ -264,11 +305,29 @@ Gluetun's control server must be reachable from Home Assistant:
 
 ---
 
-### Trakt *(optional)*
+### Recommendations — Trakt + SuggestArr *(optional)*
 
-Enables personalised movie and show recommendations in the card based on your Trakt watch history.
+Two independent sources of "what should I watch next". Each gets its own category in the card and you can use either, both, or neither.
 
-> **Scrobbling required for personalised results.** Trakt recommendations are based on your watch history — titles you've already seen are filtered out and the suggestions are tailored to your taste. For this to work, your plays need to be synced to Trakt automatically. If you use Plex, [PlexTraktSync](https://github.com/Taxel/PlexTraktSync) is a good option — run it as a Docker container in `watch` mode and it will mark titles as watched on Trakt in real time as you finish them.
+#### SuggestArr
+
+Trakt has moved personalised recommendations behind its paid VIP plan. [SuggestArr](https://github.com/giuseppe99barchetta/SuggestArr) is a free, self-hosted alternative that needs no third-party account: it reads what you have actually watched on Plex, Jellyfin or Emby and suggests titles you do not own yet.
+
+| Field | Notes |
+|-------|-------|
+| SuggestArr URL | `http://192.168.1.10:5001` |
+| SuggestArr username | Leave empty if SuggestArr runs with `AUTH_MODE=local_bypass` or with authentication disabled |
+| SuggestArr password | Leave empty for the same reason |
+
+> **Turn off automatic requests in SuggestArr.** In SuggestArr's own settings, stop it from sending requests to Seerr on its own. Its background job runs on a schedule, so left on it will request titles by itself and you only find out afterwards. With it off, the suggestions wait in the card until you approve them.
+
+SuggestArr refills its pool on its own schedule, so once you have worked through the current suggestions, a fresh batch can take a few hours to appear.
+
+#### Trakt
+
+Personalised recommendations from your Trakt watch history. **Trakt now requires a paid VIP account** for this — without one the API returns nothing and the category stays empty.
+
+> **Scrobbling required for personalised results.** Recommendations are based on your watch history — titles you've already seen are filtered out and the suggestions are tailored to your taste. For this to work, your plays need to be synced to Trakt automatically. If you use Plex, [PlexTraktSync](https://github.com/Taxel/PlexTraktSync) is a good option — run it as a Docker container in `watch` mode and it will mark titles as watched on Trakt in real time as you finish them.
 
 1. Go to [trakt.tv/oauth/applications/new](https://trakt.tv/oauth/applications/new) and create a new application (redirect URI: `urn:ietf:wg:oauth:2.0:oob`)
 2. Copy the **Client ID** and **Client Secret** into the setup step
@@ -276,11 +335,25 @@ Enables personalised movie and show recommendations in the card based on your Tr
 
 ---
 
+### Maintainerr *(optional)*
+
+[Maintainerr](https://github.com/jorenn92/Maintainerr) cleans up your library by rules — "delete a movie 30 days after everyone has watched it", and so on. Connecting it does two things: it gives the card a full Maintainerr panel, and it puts a **countdown badge on every title queued for deletion**, everywhere in the card. That second part is the real gain — you see what is about to disappear while browsing, not only when you go looking.
+
+Maintainerr has no authentication, so only the address is needed.
+
+| Field | Example |
+|-------|---------|
+| Maintainerr URL | `http://192.168.1.10:6246` — default port is 6246 |
+
+In the card you can then browse and run rules, edit them or build new ones, manage collections and exclusions, see the deletion schedule on a calendar, and check how much space the cleanup has reclaimed.
+
+---
+
 ## Family & Guest Accounts
 
-If you configure a family account (non-admin Overseerr/Jellyseerr user), the card uses that account for media requests made by non-admin HA users. This lets household members request media without admin privileges.
+If you configure a family account (non-admin Seerr user), the card uses that account for media requests made by non-admin HA users. This lets household members request media without admin privileges.
 
-You can optionally add a **guest account** — a second non-admin Overseerr/Jellyseerr user for visitors or temporary users. Once both accounts are configured, a **Users** tab appears in the card editor where you can map specific HA users to either the Family or Guest account. Users not explicitly mapped default to the Family account.
+You can optionally add a **guest account** — a second non-admin Seerr user for visitors or temporary users. Once both accounts are configured, a **Users** tab appears in the card editor where you can map specific HA users to either the Family or Guest account. Users not explicitly mapped default to the Family account.
 
 ---
 
@@ -297,6 +370,18 @@ Change any setting at any time without reinstalling:
 **Settings → Devices & Services → Arr Stack → ⋮ → Reconfigure**
 
 Your existing settings are pre-filled. Clearing a URL disables that service in the card.
+
+---
+
+## Anonymous usage metrics
+
+The card sends one anonymous ping per browser session: its version, whether it is running on a phone, and which services are configured — just the names, no URLs, no keys, no titles, nothing about your library. The installation is identified by a short hash of your dashboard's hostname, so it cannot be traced back to you. You can see exactly what is collected at [argalas.org/arr-stats](https://argalas.org/arr-stats).
+
+Knowing which parts people actually use is what guides where the work goes next, so leaving it on genuinely helps. If you would rather not take part, that is entirely fine:
+
+**Settings → Devices & Services → Arr Stack → ⋮ → Reconfigure** → tick **Metrics collection** in the service list → turn on the opt-out switch on the final step.
+
+This installation then stops sending anything.
 
 ---
 

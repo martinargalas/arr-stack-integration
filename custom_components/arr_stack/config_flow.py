@@ -9,6 +9,7 @@ import voluptuous as vol
 _LOGGER = logging.getLogger(__name__)
 
 from homeassistant import config_entries
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -32,13 +33,17 @@ from .const import (
     CONF_EMBY_URL, CONF_EMBY_KEY,
     CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY,
     CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY,
-    CONF_TRACEARR_URL, CONF_TRACEARR_KEY, CONF_TRACEARR_REFRESH_TOKEN,
+    CONF_TRACEARR_URL, CONF_TRACEARR_KEY, CONF_TRACEARR_REFRESH_TOKEN, CONF_TRACEARR_SESSION_COOKIE,
     CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET,
     CONF_TRAKT_ACCESS_TOKEN, CONF_TRAKT_REFRESH_TOKEN, CONF_TRAKT_EXPIRES_AT,
     TRAKT_API_BASE,
     CONF_PROWLARR_URL, CONF_PROWLARR_KEY,
+    CONF_MAINTAINERR_URL,
     CONF_SKIP_SSL_VERIFY,
     CONF_DEBUG_LOGGING,
+    CONF_TMDB_KEY,
+    CONF_METRICS_OPT_OUT,
+    CONF_SUGGESTARR_URL, CONF_SUGGESTARR_USER, CONF_SUGGESTARR_PASS,
 )
 
 
@@ -305,6 +310,62 @@ async def _test_arr(session: aiohttp.ClientSession, url: str, key: str, name: st
         return _log_exc(name, test_url, e)
 
 
+async def _test_suggestarr(session, url, user, password, ssl=None):
+    """Reachability plus, when credentials are given, that they are accepted.
+
+    SuggestArr can run with auth disabled or bypassed for local networks, so a
+    working install may legitimately have no username at all.
+    """
+    base = (url or "").rstrip("/")
+    if not base:
+        return None
+    try:
+        async with session.get(
+            f"{base}/api/health",
+            timeout=aiohttp.ClientTimeout(total=10),
+            ssl=ssl,
+        ) as r:
+            if r.status not in (200, 401):
+                return "cannot_connect"
+    except Exception:
+        return "cannot_connect"
+
+    if not user:
+        return None
+    try:
+        async with session.post(
+            f"{base}/api/auth/login",
+            json={"username": user, "password": password or ""},
+            timeout=aiohttp.ClientTimeout(total=10),
+            ssl=ssl,
+        ) as r:
+            if r.status in (401, 403):
+                return "invalid_auth"
+            if r.status != 200:
+                return "cannot_connect"
+    except Exception:
+        return "cannot_connect"
+    return None
+
+
+async def _test_tmdb(session, api_key, ssl=None):
+    """A cheap authenticated call — /configuration needs nothing but the key."""
+    try:
+        async with session.get(
+            "https://api.themoviedb.org/3/configuration",
+            params={"api_key": api_key},
+            timeout=aiohttp.ClientTimeout(total=10),
+            ssl=ssl,
+        ) as r:
+            if r.status == 401:
+                return "tmdb_unauthorized"
+            if r.status != 200:
+                return "cannot_connect"
+    except Exception:
+        return "cannot_connect"
+    return None
+
+
 async def _test_overseerr(session: aiohttp.ClientSession, url: str, key: str, ssl=None) -> str | None:
     if err := _url_error(url):
         return err
@@ -474,10 +535,120 @@ async def _test_bazarr(session: aiohttp.ClientSession, url: str, key: str, ssl=N
         return _log_exc("bazarr", test_url, e)
 
 
+async def _test_maintainerr(session, url, ssl=None):
+    try:
+        async with session.get(
+            f"{url}/api/health/ready",
+            timeout=aiohttp.ClientTimeout(total=10),
+            ssl=ssl,
+        ) as r:
+            if r.status == 200:
+                data = await r.json()
+                if data.get("status") == "ok":
+                    return None
+            return "maintainerr_error"
+    except Exception:
+        return "maintainerr_error"
+
+
+# ── Collapsible sections ─────────────────────────────────────────────────────
+#
+# Every step groups its fields into named sections so each service gets its own
+# heading, its own explanation and its own chevron. Sections change two things
+# about a step: values arrive nested one level deep, and an error can no longer
+# be pinned to a single field — only "base" renders reliably above the form.
+
+
+def _flat(user_input):
+    """Undo the section nesting so the step bodies keep working on flat keys."""
+    if not user_input:
+        return user_input
+    out = {}
+    for key, val in user_input.items():
+        if isinstance(val, dict):
+            out.update(val)
+        else:
+            out[key] = val
+    return out
+
+
+def _sections(groups, types=None, required=()):
+    """Build a schema of open sections from {section_name: [field, ...]}."""
+    types = types or {}
+    schema = {}
+    for name, fields in groups.items():
+        inner = {}
+        for field in fields:
+            marker = vol.Required if field in required else vol.Optional
+            inner[marker(field)] = types.get(field, str)
+        schema[vol.Required(name)] = section(vol.Schema(inner), {"collapsed": False})
+    return vol.Schema(schema)
+
+
+def _nest(groups, flat):
+    """Spread flat suggested values back over the section layout."""
+    flat = flat or {}
+    return {
+        name: {field: flat.get(field, "") for field in fields}
+        for name, fields in groups.items()
+    }
+
+
+# Codes that say what went wrong but not with whom. In a step holding several
+# services a bare "cannot_connect" is useless, so it gets the service prefixed.
+_GENERIC_ERRORS = {"cannot_connect", "invalid_auth", "invalid_url"}
+
+
+def _svc_err(service: str, code: str) -> str:
+    """Qualify a generic error code with the service that produced it."""
+    return f"{service}_{code}" if code in _GENERIC_ERRORS else code
+
+
 # ── Config Flow ──────────────────────────────────────────────────────────────
 
 # All configurable step groups in order
-_ALL_STEPS = ['media', 'torrents', 'usenet', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr']
+_ALL_STEPS = ['media', 'torrents', 'usenet', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr', 'maintainerr']
+
+# Field layout per step: {step: {section: [field, ...]}}
+_TORRENT_GROUPS = {
+    "qbittorrent": [CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS],
+    "deluge":      [CONF_DELUGE_URL, CONF_DELUGE_PASS],
+    "rtorrent":    [CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS],
+    "gluetun":     [CONF_GLUETUN_URL, CONF_GLUETUN_KEY],
+}
+_USENET_GROUPS = {
+    "sabnzbd": [CONF_SAB_URL, CONF_SAB_KEY],
+    "nzbget":  [CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS],
+}
+_MEDIA_GROUPS = {
+    "radarr": [CONF_RADARR_URL, CONF_RADARR_KEY],
+    "sonarr": [CONF_SONARR_URL, CONF_SONARR_KEY],
+}
+_QUALITY_GROUPS = {
+    "radarr2": [CONF_RADARR2_URL, CONF_RADARR2_KEY],
+    "sonarr2": [CONF_SONARR2_URL, CONF_SONARR2_KEY],
+}
+_DISCOVERY_GROUPS = {
+    "tmdb":   [CONF_TMDB_KEY],
+    "seerr":  [CONF_SEERR_URL, CONF_SEERR_KEY],
+    "family": [CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS],
+    "guest":  [CONF_SEERR_GUEST_EMAIL, CONF_SEERR_GUEST_PASS],
+}
+_JELLYFIN_GROUPS = {
+    "tautulli":  [CONF_TAUTULLI_URL, CONF_TAUTULLI_KEY],
+    "jellystat": [CONF_JELLYSTAT_URL, CONF_JELLYSTAT_KEY],
+    # Cookie before refresh token: it is the one that works for every account
+    # type, and the token is on its way out.
+    "tracearr":  [CONF_TRACEARR_URL, CONF_TRACEARR_KEY,
+                  CONF_TRACEARR_SESSION_COOKIE, CONF_TRACEARR_REFRESH_TOKEN],
+}
+_BAZARR_GROUPS      = {"bazarr":      [CONF_BAZARR_URL, CONF_BAZARR_KEY]}
+_PROWLARR_GROUPS    = {"prowlarr":    [CONF_PROWLARR_URL, CONF_PROWLARR_KEY]}
+_MAINTAINERR_GROUPS = {"maintainerr": [CONF_MAINTAINERR_URL]}
+_TRAKT_GROUPS = {
+    "trakt":      [CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET],
+    "suggestarr": [CONF_SUGGESTARR_URL, CONF_SUGGESTARR_USER, CONF_SUGGESTARR_PASS],
+}
 
 
 class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -533,10 +704,13 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_service_selection(self, user_input=None):
         if user_input is not None:
             # media is always included — mandatory
-            optional_steps = ['torrents', 'usenet', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr']
+            optional_steps = ['torrents', 'usenet', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr', 'maintainerr']
             selected = ['media'] + [s for s in optional_steps if user_input.get(f'enable_{s}', False)]
             # preserve order from _ALL_STEPS
             self._step_queue = [s for s in _ALL_STEPS if s in selected]
+            # Metrics is always last — it is a note, not a service
+            if user_input.get('enable_metrics', False):
+                self._step_queue.append('metrics')
             return await self._next_step()
 
         # Derive defaults from existing data
@@ -551,7 +725,12 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional('enable_jellyfin',  default=bool(d.get(CONF_TAUTULLI_URL) or d.get(CONF_JELLYSTAT_URL) or d.get(CONF_TRACEARR_URL))): bool,
             vol.Optional('enable_trakt',     default=bool(d.get(CONF_TRAKT_CLIENT_ID))): bool,
             vol.Optional('enable_prowlarr',  default=bool(d.get(CONF_PROWLARR_URL))): bool,
+            vol.Optional('enable_maintainerr', default=bool(d.get(CONF_MAINTAINERR_URL))): bool,
         })
+        if self._reconfigure_entry is not None:
+            schema = schema.extend({
+                vol.Optional('enable_metrics', default=False): bool,
+            })
         return self.async_show_form(
             step_id="service_selection",
             data_schema=schema,
@@ -565,6 +744,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
+        user_input = _flat(user_input)
         if user_input is not None:
             session = async_get_clientsession(self.hass)
 
@@ -576,7 +756,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ssl=ssl,
             )
             if err:
-                errors[CONF_QBIT_URL] = err
+                errors["base"] = _svc_err("qbit", err)
 
             if not errors:
                 err = await _test_deluge(
@@ -586,7 +766,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ssl=ssl,
                 )
                 if err:
-                    errors[CONF_DELUGE_URL] = err
+                    errors["base"] = _svc_err("deluge", err)
 
             if not errors:
                 err = await _test_rtorrent(
@@ -597,7 +777,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ssl=ssl,
                 )
                 if err:
-                    errors[CONF_RTORRENT_URL] = err
+                    errors["base"] = _svc_err("rtorrent", err)
 
             if not errors:
                 for key in [CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
@@ -607,18 +787,6 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._data[key] = user_input.get(key, "")
                 return await self._next_step()
 
-        schema = vol.Schema({
-            vol.Optional(CONF_QBIT_URL):      str,
-            vol.Optional(CONF_QBIT_USER):     str,
-            vol.Optional(CONF_QBIT_PASS):     str,
-            vol.Optional(CONF_DELUGE_URL):    str,
-            vol.Optional(CONF_DELUGE_PASS):   str,
-            vol.Optional(CONF_RTORRENT_URL):  str,
-            vol.Optional(CONF_RTORRENT_USER): str,
-            vol.Optional(CONF_RTORRENT_PASS): str,
-            vol.Optional(CONF_GLUETUN_URL):   str,
-            vol.Optional(CONF_GLUETUN_KEY):   str,
-        })
         suggested = self._data if self._data else {
             CONF_QBIT_URL:      "http://192.168.1.x:8081",
             CONF_QBIT_USER:     "admin",
@@ -627,7 +795,9 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_RTORRENT_USER: "",
             CONF_GLUETUN_URL:   "http://192.168.1.x:8000",
         }
-        schema = self.add_suggested_values_to_schema(schema, suggested)
+        schema = self.add_suggested_values_to_schema(
+            _sections(_TORRENT_GROUPS), _nest(_TORRENT_GROUPS, suggested)
+        )
         return self.async_show_form(
             step_id="torrents",
             data_schema=schema,
@@ -641,6 +811,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
+        user_input = _flat(user_input)
         if user_input is not None:
             session = async_get_clientsession(self.hass)
 
@@ -651,7 +822,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ssl=ssl,
             )
             if err:
-                errors[CONF_SAB_URL] = err
+                errors["base"] = _svc_err("sabnzbd", err)
 
             if not errors:
                 err = await _test_nzbget(
@@ -662,7 +833,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ssl=ssl,
                 )
                 if err:
-                    errors[CONF_NZBGET_URL] = err
+                    errors["base"] = _svc_err("nzbget", err)
 
             if not errors:
                 for key in [CONF_SAB_URL, CONF_SAB_KEY,
@@ -670,18 +841,13 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._data[key] = user_input.get(key, "")
                 return await self._next_step()
 
-        schema = vol.Schema({
-            vol.Optional(CONF_SAB_URL):      str,
-            vol.Optional(CONF_SAB_KEY):      str,
-            vol.Optional(CONF_NZBGET_URL):   str,
-            vol.Optional(CONF_NZBGET_USER):  str,
-            vol.Optional(CONF_NZBGET_PASS):  str,
-        })
         suggested = self._data if self._data else {
             CONF_SAB_URL:    "http://192.168.1.x:8089",
             CONF_NZBGET_URL: "http://192.168.1.x:6789",
         }
-        schema = self.add_suggested_values_to_schema(schema, suggested)
+        schema = self.add_suggested_values_to_schema(
+            _sections(_USENET_GROUPS), _nest(_USENET_GROUPS, suggested)
+        )
         return self.async_show_form(
             step_id="usenet",
             data_schema=schema,
@@ -695,32 +861,33 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
+        user_input = _flat(user_input)
         if user_input is not None:
             session = async_get_clientsession(self.hass)
 
-            err = await _test_arr(session, user_input[CONF_RADARR_URL], user_input[CONF_RADARR_KEY], "radarr", ssl=ssl)
+            err = await _test_arr(session, user_input.get(CONF_RADARR_URL, ""), user_input.get(CONF_RADARR_KEY, ""), "radarr", ssl=ssl)
             if err:
-                errors[CONF_RADARR_URL] = err
+                errors["base"] = _svc_err("radarr", err)
             else:
-                err = await _test_arr(session, user_input[CONF_SONARR_URL], user_input[CONF_SONARR_KEY], "sonarr", ssl=ssl)
+                err = await _test_arr(session, user_input.get(CONF_SONARR_URL, ""), user_input.get(CONF_SONARR_KEY, ""), "sonarr", ssl=ssl)
                 if err:
-                    errors[CONF_SONARR_URL] = err
+                    errors["base"] = _svc_err("sonarr", err)
 
             if not errors:
                 self._data.update(user_input)
                 return await self._next_step()
 
-        schema = vol.Schema({
-            vol.Required(CONF_RADARR_URL): str,
-            vol.Required(CONF_RADARR_KEY): str,
-            vol.Required(CONF_SONARR_URL): str,
-            vol.Required(CONF_SONARR_KEY): str,
-        })
         suggested = self._data if self._data else {
             CONF_RADARR_URL: "http://192.168.1.x:7878",
             CONF_SONARR_URL: "http://192.168.1.x:8989",
         }
-        schema = self.add_suggested_values_to_schema(schema, suggested)
+        schema = self.add_suggested_values_to_schema(
+            _sections(
+                _MEDIA_GROUPS,
+                required=(CONF_RADARR_URL, CONF_RADARR_KEY, CONF_SONARR_URL, CONF_SONARR_KEY),
+            ),
+            _nest(_MEDIA_GROUPS, suggested),
+        )
         return self.async_show_form(
             step_id="media",
             data_schema=schema,
@@ -734,6 +901,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
+        user_input = _flat(user_input)
         if user_input is not None:
             session = async_get_clientsession(self.hass)
 
@@ -745,12 +913,12 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if radarr4k_url:
                 err = await _test_arr(session, radarr4k_url, radarr4k_key, "radarr2", ssl=ssl)
                 if err:
-                    errors[CONF_RADARR2_URL] = err
+                    errors["base"] = _svc_err("radarr2", err)
 
             if not errors and sonarr4k_url:
                 err = await _test_arr(session, sonarr4k_url, sonarr4k_key, "sonarr2", ssl=ssl)
                 if err:
-                    errors[CONF_SONARR2_URL] = err
+                    errors["base"] = _svc_err("sonarr2", err)
 
             if not errors:
                 self._data[CONF_RADARR2_URL] = radarr4k_url
@@ -759,14 +927,10 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._data[CONF_SONARR2_KEY] = sonarr4k_key
                 return await self._next_step()
 
-        schema = vol.Schema({
-            vol.Optional(CONF_RADARR2_URL): str,
-            vol.Optional(CONF_RADARR2_KEY): str,
-            vol.Optional(CONF_SONARR2_URL): str,
-            vol.Optional(CONF_SONARR2_KEY): str,
-        })
         suggested = self._data if self._data else {}
-        schema = self.add_suggested_values_to_schema(schema, suggested)
+        schema = self.add_suggested_values_to_schema(
+            _sections(_QUALITY_GROUPS), _nest(_QUALITY_GROUPS, suggested)
+        )
         return self.async_show_form(
             step_id="quality",
             data_schema=schema,
@@ -777,9 +941,11 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # ── Discovery: Overseerr + family + Bazarr ────────────────────────────────
 
     async def async_step_discovery(self, user_input=None):
+        """Seerr accounts plus the TMDB key that feeds the discovery rows."""
         errors = {}
         ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
+        user_input = _flat(user_input)
         if user_input is not None:
             session = async_get_clientsession(self.hass)
             seerr_url = user_input.get(CONF_SEERR_URL, "").strip()
@@ -788,7 +954,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if seerr_url and seerr_key:
                 err = await _test_overseerr(session, seerr_url, seerr_key, ssl=ssl)
                 if err:
-                    errors[CONF_SEERR_URL] = err
+                    errors["base"] = _svc_err("seerr", err)
                 else:
                     err = await _test_overseerr_family(
                         session,
@@ -798,7 +964,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         ssl=ssl,
                     )
                     if err:
-                        errors[CONF_SEERR_FAMILY_EMAIL] = err
+                        errors["base"] = _svc_err("seerr_family", err)
 
                 if not errors:
                     err = await _test_overseerr_family(
@@ -810,31 +976,53 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         prefix="seerr_guest",
                     )
                     if err:
-                        errors[CONF_SEERR_GUEST_EMAIL] = err
+                        errors["base"] = _svc_err("seerr_guest", err)
+
+            tmdb_key = user_input.get(CONF_TMDB_KEY, "").strip()
+            if tmdb_key:
+                err = await _test_tmdb(session, tmdb_key, ssl=ssl)
+                if err:
+                    errors["base"] = _svc_err("tmdb", err)
 
             if not errors:
                 for key in [CONF_SEERR_URL, CONF_SEERR_KEY,
                              CONF_SEERR_FAMILY_EMAIL, CONF_SEERR_FAMILY_PASS,
-                             CONF_SEERR_GUEST_EMAIL, CONF_SEERR_GUEST_PASS]:
+                             CONF_SEERR_GUEST_EMAIL, CONF_SEERR_GUEST_PASS,
+                             CONF_TMDB_KEY]:
                     self._data[key] = user_input.get(key, "")
                 return await self._next_step()
 
-        schema = vol.Schema({
-            vol.Optional(CONF_SEERR_URL):          str,
-            vol.Optional(CONF_SEERR_KEY):          str,
-            vol.Optional(CONF_SEERR_FAMILY_EMAIL): str,
-            vol.Optional(CONF_SEERR_FAMILY_PASS):  str,
-            vol.Optional(CONF_SEERR_GUEST_EMAIL):  str,
-            vol.Optional(CONF_SEERR_GUEST_PASS):   str,
-        })
         suggested = self._data if self._data else {
             CONF_SEERR_URL: "http://192.168.1.x:5055",
         }
-        schema = self.add_suggested_values_to_schema(schema, suggested)
+        schema = self.add_suggested_values_to_schema(
+            _sections(_DISCOVERY_GROUPS), _nest(_DISCOVERY_GROUPS, suggested)
+        )
         return self.async_show_form(
             step_id="discovery",
             data_schema=schema,
             errors=errors,
+            last_step=len(self._step_queue) == 0,
+        )
+
+    # ── Metrics ──────────────────────────────────────────────────────────────
+
+    async def async_step_metrics(self, user_input=None):
+        """Opt-out for the anonymous usage ping. Reachable only via reconfigure."""
+        if user_input is not None:
+            self._data[CONF_METRICS_OPT_OUT] = bool(user_input.get(CONF_METRICS_OPT_OUT, False))
+            return await self._next_step()
+
+        schema = vol.Schema({
+            vol.Optional(
+                CONF_METRICS_OPT_OUT,
+                default=bool(self._data.get(CONF_METRICS_OPT_OUT, False)),
+            ): bool,
+        })
+        return self.async_show_form(
+            step_id="metrics",
+            data_schema=schema,
+            errors={},
             last_step=len(self._step_queue) == 0,
         )
 
@@ -844,6 +1032,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
+        user_input = _flat(user_input)
         if user_input is not None:
             session = async_get_clientsession(self.hass)
             err = await _test_bazarr(
@@ -853,21 +1042,19 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ssl=ssl,
             )
             if err:
-                errors[CONF_BAZARR_URL] = err
+                errors["base"] = _svc_err("bazarr", err)
 
             if not errors:
                 self._data[CONF_BAZARR_URL] = user_input.get(CONF_BAZARR_URL, "")
                 self._data[CONF_BAZARR_KEY] = user_input.get(CONF_BAZARR_KEY, "")
                 return await self._next_step()
 
-        schema = vol.Schema({
-            vol.Optional(CONF_BAZARR_URL): str,
-            vol.Optional(CONF_BAZARR_KEY): str,
-        })
         suggested = self._data if self._data else {
             CONF_BAZARR_URL: "http://192.168.1.x:6767",
         }
-        schema = self.add_suggested_values_to_schema(schema, suggested)
+        schema = self.add_suggested_values_to_schema(
+            _sections(_BAZARR_GROUPS), _nest(_BAZARR_GROUPS, suggested)
+        )
         return self.async_show_form(
             step_id="bazarr",
             data_schema=schema,
@@ -880,6 +1067,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_plex(self, user_input=None):
         errors = {}
 
+        user_input = _flat(user_input)
         if user_input is not None:
             # Save Emby regardless of Plex skip
             self._data[CONF_EMBY_URL] = (user_input.get(CONF_EMBY_URL) or "").strip().rstrip("/")
@@ -893,7 +1081,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             manual_url = (user_input.get("plex_server_url") or "").strip().rstrip("/")
             if manual_url and _url_error(manual_url):
-                errors["plex_server_url"] = "invalid_url"
+                errors["base"] = "plex_invalid_url"
                 self._plex_pin_id = None
             elif self._plex_pin_id:
                 token, server_url = await self._poll_plex_pin()
@@ -929,23 +1117,27 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
         skip_default = "skip" if self._data.get(CONF_PLEX_TOKEN) else "setup"
-        schema = vol.Schema({
-            vol.Optional("skip_plex", default=skip_default): SelectSelector(
-                SelectSelectorConfig(
-                    options=["setup", "skip"],
-                    translation_key="skip_plex",
-                    mode=SelectSelectorMode.LIST,
-                )
-            ),
-            vol.Optional("plex_server_url"): str,
-            vol.Optional(CONF_EMBY_URL): str,
-            vol.Optional(CONF_EMBY_KEY): str,
-        })
-        schema = self.add_suggested_values_to_schema(schema, {
-            "plex_server_url": self._data.get(CONF_PLEX_URL, ""),
-            CONF_EMBY_URL: self._data.get(CONF_EMBY_URL, ""),
-            CONF_EMBY_KEY: self._data.get(CONF_EMBY_KEY, ""),
-        })
+        plex_groups = {
+            "plex": ["skip_plex", "plex_server_url"],
+            "emby": [CONF_EMBY_URL, CONF_EMBY_KEY],
+        }
+        schema = self.add_suggested_values_to_schema(
+            _sections(plex_groups, types={
+                "skip_plex": SelectSelector(
+                    SelectSelectorConfig(
+                        options=["setup", "skip"],
+                        translation_key="skip_plex",
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
+            }),
+            _nest(plex_groups, {
+                "skip_plex":       skip_default,
+                "plex_server_url": self._data.get(CONF_PLEX_URL, ""),
+                CONF_EMBY_URL:     self._data.get(CONF_EMBY_URL, ""),
+                CONF_EMBY_KEY:     self._data.get(CONF_EMBY_KEY, ""),
+            }),
+        )
         return self.async_show_form(
             step_id="plex",
             data_schema=schema,
@@ -960,6 +1152,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
+        user_input = _flat(user_input)
         if user_input is not None:
             session = async_get_clientsession(self.hass)
             tautulli_url  = user_input.get(CONF_TAUTULLI_URL, "")
@@ -971,17 +1164,17 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             err = await _test_tautulli(session, tautulli_url, tautulli_key, ssl=ssl)
             if err:
-                errors[CONF_TAUTULLI_URL] = err
+                errors["base"] = _svc_err("tautulli", err)
 
             if not errors:
                 err = await _test_jellystat(session, jellystat_url, jellystat_key, ssl=ssl)
                 if err:
-                    errors[CONF_JELLYSTAT_URL] = err
+                    errors["base"] = _svc_err("jellystat", err)
 
             if not errors:
                 err = await _test_tracearr(session, tracearr_url, tracearr_key, ssl=ssl)
                 if err:
-                    errors[CONF_TRACEARR_URL] = err
+                    errors["base"] = _svc_err("tracearr", err)
 
             if not errors:
                 self._data[CONF_TAUTULLI_URL]  = tautulli_url
@@ -991,28 +1184,17 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._data[CONF_TRACEARR_URL]           = tracearr_url
                 self._data[CONF_TRACEARR_KEY]           = tracearr_key
                 self._data[CONF_TRACEARR_REFRESH_TOKEN] = user_input.get(CONF_TRACEARR_REFRESH_TOKEN, self._data.get(CONF_TRACEARR_REFRESH_TOKEN, ""))
+                self._data[CONF_TRACEARR_SESSION_COOKIE] = user_input.get(CONF_TRACEARR_SESSION_COOKIE, self._data.get(CONF_TRACEARR_SESSION_COOKIE, ""))
                 return await self._next_step()
 
-        schema = vol.Schema({
-            vol.Optional(CONF_TAUTULLI_URL):          str,
-            vol.Optional(CONF_TAUTULLI_KEY):          str,
-            vol.Optional(CONF_JELLYSTAT_URL):         str,
-            vol.Optional(CONF_JELLYSTAT_KEY):         str,
-            vol.Optional(CONF_TRACEARR_URL):          str,
-            vol.Optional(CONF_TRACEARR_KEY):          str,
-            vol.Optional(CONF_TRACEARR_REFRESH_TOKEN): str,
-        })
         ui = user_input or {}
         suggested = {
-            CONF_TAUTULLI_URL:           ui.get(CONF_TAUTULLI_URL)          or self._data.get(CONF_TAUTULLI_URL, ""),
-            CONF_TAUTULLI_KEY:           ui.get(CONF_TAUTULLI_KEY)          or self._data.get(CONF_TAUTULLI_KEY, ""),
-            CONF_JELLYSTAT_URL:          ui.get(CONF_JELLYSTAT_URL)         or self._data.get(CONF_JELLYSTAT_URL, ""),
-            CONF_JELLYSTAT_KEY:          ui.get(CONF_JELLYSTAT_KEY)         or self._data.get(CONF_JELLYSTAT_KEY, ""),
-            CONF_TRACEARR_URL:           ui.get(CONF_TRACEARR_URL)          or self._data.get(CONF_TRACEARR_URL, ""),
-            CONF_TRACEARR_KEY:           ui.get(CONF_TRACEARR_KEY)          or self._data.get(CONF_TRACEARR_KEY, ""),
-            CONF_TRACEARR_REFRESH_TOKEN: ui.get(CONF_TRACEARR_REFRESH_TOKEN) or self._data.get(CONF_TRACEARR_REFRESH_TOKEN, ""),
+            key: ui.get(key) or self._data.get(key, "")
+            for fields in _JELLYFIN_GROUPS.values() for key in fields
         }
-        schema = self.add_suggested_values_to_schema(schema, suggested)
+        schema = self.add_suggested_values_to_schema(
+            _sections(_JELLYFIN_GROUPS), _nest(_JELLYFIN_GROUPS, suggested)
+        )
         return self.async_show_form(
             step_id="jellyfin",
             data_schema=schema,
@@ -1023,22 +1205,42 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # ── Trakt OAuth ───────────────────────────────────────────────────────────
 
     async def async_step_trakt(self, user_input=None):
+        """Recommendation providers: SuggestArr (free) and Trakt (VIP only)."""
         errors = {}
+        ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
 
+        user_input = _flat(user_input)
         if user_input is not None:
             client_id     = (user_input.get(CONF_TRAKT_CLIENT_ID) or "").strip()
             client_secret = (user_input.get(CONF_TRAKT_CLIENT_SECRET) or "").strip()
 
-            if not client_id:
+            sa_url  = (user_input.get(CONF_SUGGESTARR_URL) or "").strip()
+            sa_user = (user_input.get(CONF_SUGGESTARR_USER) or "").strip()
+            sa_pass = user_input.get(CONF_SUGGESTARR_PASS) or ""
+            if sa_url:
+                session = async_get_clientsession(self.hass)
+                err = await _test_suggestarr(session, sa_url, sa_user, sa_pass, ssl=ssl)
+                if err:
+                    # Both providers share the one "base" error slot now, so the
+                    # message has to say which of them failed.
+                    errors["base"] = _svc_err("suggestarr", err)
+            if not errors:
+                self._data[CONF_SUGGESTARR_URL]  = sa_url
+                self._data[CONF_SUGGESTARR_USER] = sa_user
+                self._data[CONF_SUGGESTARR_PASS] = sa_pass
+
+            if errors:
+                pass
+            elif not client_id:
                 return await self._next_step()
 
             # Credentials unchanged and token already present → skip re-auth
-            if (client_id == self._data.get(CONF_TRAKT_CLIENT_ID, '').strip()
+            elif (client_id == self._data.get(CONF_TRAKT_CLIENT_ID, '').strip()
                     and self._data.get(CONF_TRAKT_ACCESS_TOKEN)):
                 return await self._next_step()
 
-            if not client_secret:
-                errors[CONF_TRAKT_CLIENT_SECRET] = "trakt_secret_required"
+            elif not client_secret:
+                errors["base"] = "trakt_secret_required"
             else:
                 session = async_get_clientsession(self.hass)
                 try:
@@ -1053,7 +1255,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         timeout=aiohttp.ClientTimeout(total=10),
                     ) as resp:
                         if resp.status != 200:
-                            errors[CONF_TRAKT_CLIENT_ID] = "trakt_device_code_failed"
+                            errors["base"] = "trakt_device_code_failed"
                         else:
                             dc = await resp.json()
                             self._trakt_device_code = dc
@@ -1061,17 +1263,16 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             self._trakt_client_secret = client_secret
                             return await self.async_step_trakt_poll()
                 except Exception:
-                    errors[CONF_TRAKT_CLIENT_ID] = "trakt_connection_error"
+                    errors["base"] = "trakt_connection_error"
 
-        schema = vol.Schema({
-            vol.Optional(CONF_TRAKT_CLIENT_ID):     str,
-            vol.Optional(CONF_TRAKT_CLIENT_SECRET): str,
-        })
         ui = user_input or {}
-        schema = self.add_suggested_values_to_schema(schema, {
-            CONF_TRAKT_CLIENT_ID:     ui.get(CONF_TRAKT_CLIENT_ID) or self._data.get(CONF_TRAKT_CLIENT_ID, ""),
-            CONF_TRAKT_CLIENT_SECRET: ui.get(CONF_TRAKT_CLIENT_SECRET) or self._data.get(CONF_TRAKT_CLIENT_SECRET, ""),
-        })
+        suggested = {
+            key: ui.get(key) or self._data.get(key, "")
+            for fields in _TRAKT_GROUPS.values() for key in fields
+        }
+        schema = self.add_suggested_values_to_schema(
+            _sections(_TRAKT_GROUPS), _nest(_TRAKT_GROUPS, suggested)
+        )
         return self.async_show_form(
             step_id="trakt",
             data_schema=schema,
@@ -1143,13 +1344,14 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_prowlarr(self, user_input=None):
         errors = {}
+        user_input = _flat(user_input)
         if user_input is not None:
             url = (user_input.get(CONF_PROWLARR_URL) or "").strip().rstrip("/")
             key = (user_input.get(CONF_PROWLARR_KEY) or "").strip()
             if url:
                 err = _url_error(url)
                 if err:
-                    errors[CONF_PROWLARR_URL] = err
+                    errors["base"] = _svc_err("prowlarr", err)
                 else:
                     try:
                         session = async_get_clientsession(self.hass)
@@ -1161,9 +1363,9 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             ssl=ssl,
                         ) as r:
                             if r.status not in (200, 201):
-                                errors[CONF_PROWLARR_URL] = "cannot_connect"
+                                errors["base"] = "prowlarr_cannot_connect"
                     except Exception as e:
-                        errors[CONF_PROWLARR_URL] = _map_exc(e)
+                        errors["base"] = _svc_err("prowlarr", _log_exc("prowlarr", url, e))
             if not errors:
                 self._data[CONF_PROWLARR_URL] = url or ""
                 self._data[CONF_PROWLARR_KEY] = key
@@ -1171,13 +1373,47 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         d = self._data
         ui = user_input or {}
-        schema = vol.Schema({
-            vol.Optional(CONF_PROWLARR_URL, default=ui.get(CONF_PROWLARR_URL) or d.get(CONF_PROWLARR_URL, "")): str,
-            vol.Optional(CONF_PROWLARR_KEY, default=ui.get(CONF_PROWLARR_KEY) or d.get(CONF_PROWLARR_KEY, "")): str,
-        })
+        schema = self.add_suggested_values_to_schema(
+            _sections(_PROWLARR_GROUPS),
+            _nest(_PROWLARR_GROUPS, {
+                CONF_PROWLARR_URL: ui.get(CONF_PROWLARR_URL) or d.get(CONF_PROWLARR_URL, ""),
+                CONF_PROWLARR_KEY: ui.get(CONF_PROWLARR_KEY) or d.get(CONF_PROWLARR_KEY, ""),
+            }),
+        )
         return self.async_show_form(
             step_id="prowlarr",
             data_schema=schema,
+            errors=errors,
+            last_step=len(self._step_queue) == 0,
+        )
+
+    # ── Maintainerr ──────────────────────────────────────────────────────────
+
+    async def async_step_maintainerr(self, user_input=None):
+        errors = {}
+        d = self._data
+        user_input = _flat(user_input)
+        if user_input is not None:
+            url = (user_input.get(CONF_MAINTAINERR_URL) or "").strip().rstrip("/")
+            if url:
+                err = _url_error(url)
+                if err:
+                    errors["base"] = _svc_err("maintainerr", err)
+                else:
+                    session = async_get_clientsession(self.hass)
+                    ssl = False if d.get(CONF_SKIP_SSL_VERIFY) else None
+                    err = await _test_maintainerr(session, url, ssl)
+                    if err:
+                        errors["base"] = _svc_err("maintainerr", err)
+            if not errors:
+                d[CONF_MAINTAINERR_URL] = url or ""
+                return await self._next_step()
+        suggested = {CONF_MAINTAINERR_URL: d.get(CONF_MAINTAINERR_URL, "")}
+        return self.async_show_form(
+            step_id="maintainerr",
+            data_schema=self.add_suggested_values_to_schema(
+                _sections(_MAINTAINERR_GROUPS), _nest(_MAINTAINERR_GROUPS, suggested)
+            ),
             errors=errors,
             last_step=len(self._step_queue) == 0,
         )

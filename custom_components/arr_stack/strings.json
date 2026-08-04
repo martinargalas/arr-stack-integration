@@ -21,168 +21,338 @@
           "enable_usenet": "Usenet clients / SABnzbd / NZBGet",
           "enable_quality": "2nd instances / Radarr 2 / Sonarr 2",
           "enable_bazarr": "Bazarr",
-          "enable_discovery": "Discovery / Overseerr / Jellyseerr",
+          "enable_discovery": "Discovery / Seerr",
           "enable_plex": "Plex (playback control) / Emby",
           "enable_jellyfin": "Streaming stats / Tautulli / Jellystat / Tracearr",
-          "enable_trakt": "Trakt (personalised recommendations)",
-          "enable_prowlarr": "Prowlarr (indexer management)"
+          "enable_trakt": "Recommendations / Trakt.tv / SuggestArr",
+          "enable_prowlarr": "Prowlarr (indexer management)",
+          "enable_maintainerr": "Maintainerr (automatic media cleanup)",
+          "enable_metrics": "Metrics collection"
         }
       },
       "torrents": {
         "title": "Arr Stack — Torrent Clients",
-        "description": "All fields are optional — leave any field empty to skip that client.",
-        "data": {
-          "qbittorrent_url": "qBittorrent URL (optional)",
-          "qbittorrent_user": "qBittorrent username (optional)",
-          "qbittorrent_password": "qBittorrent password (optional)",
-          "deluge_url": "Deluge URL (optional)",
-          "deluge_password": "Deluge password (optional)",
-          "rtorrent_url": "rTorrent URL (optional)",
-          "rtorrent_user": "rTorrent / ruTorrent username (optional)",
-          "rtorrent_password": "rTorrent / ruTorrent password (optional)",
-          "gluetun_url": "Gluetun URL (optional)",
-          "gluetun_api_key": "Gluetun API key (optional)"
-        },
-        "data_description": {
-          "qbittorrent_url": "e.g. http://192.168.1.10:8081 — default port is 8081",
-          "qbittorrent_user": "The username you use to log into qBittorrent Web UI",
-          "qbittorrent_password": "The password for the qBittorrent Web UI",
-          "deluge_url": "e.g. http://192.168.1.10:8112 — default port is 8112",
-          "deluge_password": "Deluge Web UI password (set in Preferences → Interface)",
-          "rtorrent_url": "e.g. http://192.168.1.10:9080 — base URL of ruTorrent (XMLRPC at /RPC2)",
-          "rtorrent_user": "HTTP Basic auth username for ruTorrent (if configured in nginx)",
-          "rtorrent_password": "HTTP Basic auth password for ruTorrent",
-          "gluetun_url": "e.g. http://192.168.1.10:8000 — Gluetun HTTP control server (default port 8000)",
-          "gluetun_api_key": "API key defined in /gluetun/auth/config.toml (leave empty if auth disabled)"
+        "description": "All clients are optional — fill in only the one you use.",
+        "sections": {
+          "qbittorrent": {
+            "name": "qBittorrent",
+            "description": "Active torrents in the card, with pause, resume and delete. Leave empty to skip.",
+            "data": {
+              "qbittorrent_url": "URL",
+              "qbittorrent_user": "Username",
+              "qbittorrent_password": "Password"
+            },
+            "data_description": {
+              "qbittorrent_url": "e.g. http://192.168.1.10:8081 — default port is 8081",
+              "qbittorrent_user": "The username you use to log into the qBittorrent Web UI",
+              "qbittorrent_password": "The password for the qBittorrent Web UI"
+            }
+          },
+          "deluge": {
+            "name": "Deluge",
+            "description": "Alternative to qBittorrent. Leave empty to skip.",
+            "data": {
+              "deluge_url": "URL",
+              "deluge_password": "Password"
+            },
+            "data_description": {
+              "deluge_url": "e.g. http://192.168.1.10:8112 — default port is 8112",
+              "deluge_password": "Deluge Web UI password, set in Preferences → Interface"
+            }
+          },
+          "rtorrent": {
+            "name": "rTorrent / ruTorrent",
+            "description": "Alternative to qBittorrent. Leave empty to skip.",
+            "data": {
+              "rtorrent_url": "URL",
+              "rtorrent_user": "Username",
+              "rtorrent_password": "Password"
+            },
+            "data_description": {
+              "rtorrent_url": "e.g. http://192.168.1.10:9080 — base URL of ruTorrent, XMLRPC at /RPC2",
+              "rtorrent_user": "HTTP Basic auth username for ruTorrent, if configured in nginx",
+              "rtorrent_password": "HTTP Basic auth password for ruTorrent"
+            }
+          },
+          "gluetun": {
+            "name": "Gluetun",
+            "description": "VPN status and the forwarded port for the torrent client. Leave empty to skip.",
+            "data": {
+              "gluetun_url": "URL",
+              "gluetun_api_key": "API key"
+            },
+            "data_description": {
+              "gluetun_url": "e.g. http://192.168.1.10:8000 — the HTTP control server, default port 8000",
+              "gluetun_api_key": "API key defined in /gluetun/auth/config.toml. Leave empty if auth is disabled."
+            }
+          }
         }
       },
       "usenet": {
         "title": "Arr Stack — Usenet Clients",
-        "description": "All fields are optional — leave any field empty to skip that client.",
-        "data": {
-          "sabnzbd_url": "SABnzbd URL (optional)",
-          "sabnzbd_api_key": "SABnzbd API key (optional)",
-          "nzbget_url": "NZBGet URL (optional)",
-          "nzbget_user": "NZBGet username (optional)",
-          "nzbget_password": "NZBGet password (optional)"
-        },
-        "data_description": {
-          "sabnzbd_url": "e.g. http://192.168.1.10:8089 — default port is 8089",
-          "sabnzbd_api_key": "Find it in SABnzbd → Config → General → API Key",
-          "nzbget_url": "e.g. http://192.168.1.10:6789 — default port is 6789",
-          "nzbget_user": "NZBGet Control username (default: nzbget)",
-          "nzbget_password": "NZBGet Control password"
+        "description": "Both clients are optional — fill in only the one you use.",
+        "sections": {
+          "sabnzbd": {
+            "name": "SABnzbd",
+            "description": "Usenet queue and history in the card, with retry and delete. Leave empty to skip.",
+            "data": {
+              "sabnzbd_url": "URL",
+              "sabnzbd_api_key": "API key"
+            },
+            "data_description": {
+              "sabnzbd_url": "e.g. http://192.168.1.10:8089 — default port is 8089",
+              "sabnzbd_api_key": "Find it in SABnzbd → Config → General → API Key"
+            }
+          },
+          "nzbget": {
+            "name": "NZBGet",
+            "description": "Alternative to SABnzbd. Leave empty to skip.",
+            "data": {
+              "nzbget_url": "URL",
+              "nzbget_user": "Username",
+              "nzbget_password": "Password"
+            },
+            "data_description": {
+              "nzbget_url": "e.g. http://192.168.1.10:6789 — default port is 6789",
+              "nzbget_user": "NZBGet Control username, default is nzbget",
+              "nzbget_password": "NZBGet Control password"
+            }
+          }
         }
       },
       "media": {
         "title": "Arr Stack — Media",
-        "description": "Radarr and Sonarr are the core of the card.",
-        "data": {
-          "radarr_url": "Radarr URL",
-          "radarr_api_key": "Radarr API key",
-          "sonarr_url": "Sonarr URL",
-          "sonarr_api_key": "Sonarr API key"
-        },
-        "data_description": {
-          "radarr_url": "e.g. http://192.168.1.10:7878 — default port is 7878",
-          "radarr_api_key": "Find it in Radarr → Settings → General → API Key",
-          "sonarr_url": "e.g. http://192.168.1.10:8989 — default port is 8989",
-          "sonarr_api_key": "Find it in Sonarr → Settings → General → API Key"
+        "description": "Radarr and Sonarr are the core of the card and are required.",
+        "sections": {
+          "radarr": {
+            "name": "Radarr",
+            "description": "Movie library, download status and interactive search. Required.",
+            "data": {
+              "radarr_url": "URL",
+              "radarr_api_key": "API key"
+            },
+            "data_description": {
+              "radarr_url": "e.g. http://192.168.1.10:7878 — default port is 7878",
+              "radarr_api_key": "Find it in Radarr → Settings → General → API Key"
+            }
+          },
+          "sonarr": {
+            "name": "Sonarr",
+            "description": "TV library, download status and interactive search. Required.",
+            "data": {
+              "sonarr_url": "URL",
+              "sonarr_api_key": "API key"
+            },
+            "data_description": {
+              "sonarr_url": "e.g. http://192.168.1.10:8989 — default port is 8989",
+              "sonarr_api_key": "Find it in Sonarr → Settings → General → API Key"
+            }
+          }
         }
       },
       "quality": {
         "title": "Arr Stack — 2nd instances",
-        "description": "Optional — configure second instances of Radarr and Sonarr, and Bazarr for subtitles. Leave any field empty to skip.",
-        "data": {
-          "radarr2_url": "Radarr 2 URL (optional)",
-          "radarr2_api_key": "Radarr 2 API key (optional)",
-          "sonarr2_url": "Sonarr 2 URL (optional)",
-          "sonarr2_api_key": "Sonarr 2 API key (optional)"
-        },
-        "data_description": {
-          "radarr2_url": "e.g. http://192.168.1.10:7879 — URL of your second Radarr instance",
-          "radarr2_api_key": "Find it in your second Radarr → Settings → General → API Key",
-          "sonarr2_url": "e.g. http://192.168.1.10:8990 — URL of your second Sonarr instance",
-          "sonarr2_api_key": "Find it in your second Sonarr → Settings → General → API Key"
+        "description": "Optional second instances of Radarr and Sonarr, typically the 4K ones.",
+        "sections": {
+          "radarr2": {
+            "name": "Radarr — second instance",
+            "description": "A separate Radarr, typically the 4K one. The card lets you pick the instance when adding a movie. Leave empty to skip.",
+            "data": {
+              "radarr2_url": "URL",
+              "radarr2_api_key": "API key"
+            },
+            "data_description": {
+              "radarr2_url": "e.g. http://192.168.1.10:7879",
+              "radarr2_api_key": "Find it in your second Radarr → Settings → General → API Key"
+            }
+          },
+          "sonarr2": {
+            "name": "Sonarr — second instance",
+            "description": "A separate Sonarr, typically the 4K one. Leave empty to skip.",
+            "data": {
+              "sonarr2_url": "URL",
+              "sonarr2_api_key": "API key"
+            },
+            "data_description": {
+              "sonarr2_url": "e.g. http://192.168.1.10:8990",
+              "sonarr2_api_key": "Find it in your second Sonarr → Settings → General → API Key"
+            }
+          }
         }
       },
       "discovery": {
         "title": "Arr Stack — Discovery",
-        "description": "Overseerr / Jellyseerr is optional. Without it, movies and shows are added directly to Radarr/Sonarr. All fields can be left empty.",
-        "data": {
-          "seerr_url": "Overseerr / Jellyseerr URL (optional)",
-          "seerr_api_key": "Overseerr / Jellyseerr API key (optional)",
-          "seerr_family_email": "Family account email (optional)",
-          "seerr_family_password": "Family account password (optional)",
-          "seerr_guest_email": "Guest account email (optional)",
-          "seerr_guest_password": "Guest account password (optional)"
-        },
-        "data_description": {
-          "seerr_url": "e.g. http://192.168.1.10:5055 — default port is 5055",
-          "seerr_api_key": "Find it in Overseerr/Jellyseerr → Settings → General → API Key",
-          "seerr_family_email": "A non-admin Overseerr/Jellyseerr account for family members — used to show and withdraw their own requests",
-          "seerr_family_password": "Password for the family account",
-          "seerr_guest_email": "A non-admin Overseerr/Jellyseerr account for guests — map HA users to this account in the card editor",
-          "seerr_guest_password": "Password for the guest account"
+        "description": "Where the card gets posters, metadata and requests from. Everything here is optional.",
+        "sections": {
+          "tmdb": {
+            "name": "TMDB — needed by 1 September 2026 if you do not use Seerr",
+            "description": "Only needed when Seerr is not configured. With a Seerr URL filled in below, the discovery rows, search and title details all come from Seerr and you can ignore this section. Otherwise, fill in your own TMDB API key before 1 September 2026 — after that date the posters, ratings, cast, trailers and the Trending and Popular rows stop working without one.",
+            "data": {
+              "tmdb_api_key": "API key"
+            },
+            "data_description": {
+              "tmdb_api_key": "Without Seerr this key powers posters, ratings, cast, trailers and the Trending/Popular rows. Get one free at themoviedb.org → Settings → API — it takes a minute and no payment details are needed. Required from 1 September 2026."
+            }
+          },
+          "seerr": {
+            "name": "Seerr",
+            "description": "Requests, discovery rows and search. Optional — without it, movies and shows are added straight to Radarr and Sonarr. Seerr is the merged successor to Overseerr and Jellyseerr; both of those work here too.",
+            "data": {
+              "seerr_url": "URL",
+              "seerr_api_key": "API key"
+            },
+            "data_description": {
+              "seerr_url": "e.g. http://192.168.1.10:5055 — default port is 5055",
+              "seerr_api_key": "Find it in Seerr → Settings → General → API Key"
+            }
+          },
+          "family": {
+            "name": "Family account",
+            "description": "A non-admin Seerr account for family members. The card uses it to show and withdraw their own requests. Leave empty to skip.",
+            "data": {
+              "seerr_family_email": "Email",
+              "seerr_family_password": "Password"
+            },
+            "data_description": {
+              "seerr_family_email": "The login email of that Seerr account",
+              "seerr_family_password": "Password for the family account"
+            }
+          },
+          "guest": {
+            "name": "Guest account",
+            "description": "A second non-admin Seerr account for guests. Map Home Assistant users to it in the card editor. Leave empty to skip.",
+            "data": {
+              "seerr_guest_email": "Email",
+              "seerr_guest_password": "Password"
+            },
+            "data_description": {
+              "seerr_guest_email": "The login email of that Seerr account",
+              "seerr_guest_password": "Password for the guest account"
+            }
+          }
         }
       },
       "bazarr": {
         "title": "Arr Stack — Bazarr",
-        "description": "Bazarr is optional — leave fields empty to skip.",
-        "data": {
-          "bazarr_url": "Bazarr URL (optional)",
-          "bazarr_api_key": "Bazarr API key (optional)"
-        },
-        "data_description": {
-          "bazarr_url": "e.g. http://192.168.1.10:6767 — default port is 6767",
-          "bazarr_api_key": "Find it in Bazarr → Settings → General → API Key"
+        "sections": {
+          "bazarr": {
+            "name": "Bazarr",
+            "description": "Subtitle status per movie and show. Leave empty to skip.",
+            "data": {
+              "bazarr_url": "URL",
+              "bazarr_api_key": "API key"
+            },
+            "data_description": {
+              "bazarr_url": "e.g. http://192.168.1.10:6767 — default port is 6767",
+              "bazarr_api_key": "Find it in Bazarr → Settings → General → API Key"
+            }
+          }
         }
       },
       "plex": {
         "title": "Arr Stack — Plex / Emby",
-        "description": "**Plex** — Optional, enables playback control.\n\n{plex_section}",
-        "data": {
-          "skip_plex": "Plex setup",
-          "plex_server_url": "Plex Server URL (optional override)",
-          "emby_url": "Emby URL (optional)",
-          "emby_api_key": "Emby API key (optional)"
-        },
-        "data_description": {
-          "plex_server_url": "Leave empty to auto-detect. Fill in only if auto-detection picks the wrong address — e.g. when HA runs on a different machine or VLAN than Plex.",
-          "emby_url": "e.g. http://192.168.1.10:8096",
-          "emby_api_key": "Dashboard → Advanced → API Keys"
+        "description": "{plex_section}",
+        "sections": {
+          "plex": {
+            "name": "Plex",
+            "description": "Playback control from the card. Follow the authentication link above, then submit.",
+            "data": {
+              "skip_plex": "Plex setup",
+              "plex_server_url": "Server URL (optional override)"
+            },
+            "data_description": {
+              "plex_server_url": "Leave empty to auto-detect. Fill in only when auto-detection picks the wrong address — for example when Home Assistant runs on a different machine or VLAN than Plex."
+            }
+          },
+          "emby": {
+            "name": "Emby",
+            "description": "Alternative to Plex. Leave empty to skip.",
+            "data": {
+              "emby_url": "URL",
+              "emby_api_key": "API key"
+            },
+            "data_description": {
+              "emby_url": "e.g. http://192.168.1.10:8096",
+              "emby_api_key": "Dashboard → Advanced → API Keys"
+            }
+          }
         }
       },
       "jellyfin": {
         "title": "Arr Stack — Streaming Stats",
-        "description": "Tautulli, Jellystat and Tracearr are optional — leave any field empty to skip that service.",
-        "data": {
-          "tautulli_url": "Tautulli URL (optional)",
-          "tautulli_api_key": "Tautulli API key (optional)",
-          "jellystat_url": "Jellystat URL (optional)",
-          "jellystat_api_key": "Jellystat API key (optional)",
-          "tracearr_url": "Tracearr URL (optional, beta)",
-          "tracearr_api_key": "Tracearr API key (optional, beta)"
-        },
-        "data_description": {
-          "tautulli_url": "e.g. http://192.168.1.10:8181 or http://192.168.1.10:8181/tautulli if using a subpath — default port is 8181",
-          "tautulli_api_key": "Find it in Tautulli → Settings → Web Interface → API Key",
-          "jellystat_url": "e.g. http://192.168.1.10:4000 — default port is 4000",
-          "jellystat_api_key": "Find it in Jellystat → Settings → API Key",
-          "tracearr_url": "e.g. http://192.168.1.10:3102 — default port is 3102 — ⚠️ beta feature",
-          "tracearr_api_key": "Find it in Tracearr → Settings → API Key"
+        "description": "All three are optional — fill in the one matching your media server.",
+        "sections": {
+          "tautulli": {
+            "name": "Tautulli",
+            "description": "Streaming statistics for Plex. Leave empty to skip.",
+            "data": {
+              "tautulli_url": "URL",
+              "tautulli_api_key": "API key"
+            },
+            "data_description": {
+              "tautulli_url": "e.g. http://192.168.1.10:8181, or http://192.168.1.10:8181/tautulli behind a subpath — default port is 8181",
+              "tautulli_api_key": "Find it in Tautulli → Settings → Web Interface → API Key"
+            }
+          },
+          "jellystat": {
+            "name": "Jellystat",
+            "description": "Streaming statistics for Jellyfin. Leave empty to skip.",
+            "data": {
+              "jellystat_url": "URL",
+              "jellystat_api_key": "API key"
+            },
+            "data_description": {
+              "jellystat_url": "e.g. http://192.168.1.10:4000 — default port is 4000",
+              "jellystat_api_key": "Find it in Jellystat → Settings → API Key"
+            }
+          },
+          "tracearr": {
+            "name": "Tracearr (beta)",
+            "description": "Watch history and storage statistics across Plex, Jellyfin and Emby. Beta — leave empty to skip. Besides the URL and API key, fill in the session cookie: the statistics and library screens need it.",
+            "data": {
+              "tracearr_url": "URL",
+              "tracearr_api_key": "API key",
+              "tracearr_refresh_token": "Refresh token",
+              "tracearr_session_cookie": "Session cookie"
+            },
+            "data_description": {
+              "tracearr_url": "e.g. http://192.168.1.10:3102 — default port is 3102",
+              "tracearr_api_key": "Find it in Tracearr → Settings → API Key",
+              "tracearr_refresh_token": "Older login method, kept for accounts that already have one. Prefer the session cookie — the refresh token is being retired and will stop working.",
+              "tracearr_session_cookie": "Needed for watch history, library and storage statistics — the API key alone cannot reach those. Open Tracearr in your browser while signed in, press F12 → Application → Cookies, and copy the whole better-auth.session_token entry (name and value)."
+            }
+          }
         }
       },
       "trakt": {
-        "title": "Arr Stack — Trakt.tv",
-        "description": "**Trakt.tv** — Optional, enables personalised movie & show recommendations.\n\n1. Go to [{trakt_apps_url}]({trakt_apps_url})\n2. Create a new application (any name, redirect URI: `urn:ietf:wg:oauth:2.0:oob`)\n3. Copy the **Client ID** and **Client Secret** below\n4. Leave both fields empty to skip Trakt",
-        "data": {
-          "trakt_client_id": "Client ID (optional)",
-          "trakt_client_secret": "Client Secret (optional)"
-        },
-        "data_description": {
-          "trakt_client_id": "From Trakt → Settings → Your API Apps → your app",
-          "trakt_client_secret": "From the same Trakt app page"
+        "title": "Arr Stack — Recommendations",
+        "sections": {
+          "trakt": {
+            "name": "Trakt.tv",
+            "description": "Fills the Trakt Recommended category in the card. Trakt VIP is required: since July 2026 only VIP members can register an API application, and applications belonging to free accounts were removed, so an old Client ID now answers 403. Without VIP leave both fields empty and the card hides this category. With VIP, create an application at https://trakt.tv/oauth/applications/new — any name, redirect URI urn:ietf:wg:oauth:2.0:oob — and copy its Client ID and Client Secret into the fields below.",
+            "data": {
+              "trakt_client_id": "Trakt Client ID (optional, VIP only)",
+              "trakt_client_secret": "Trakt Client Secret (optional, VIP only)"
+            },
+            "data_description": {
+              "trakt_client_id": "From Trakt → Settings → Apps → API Applications. Leave empty to skip Trakt.",
+              "trakt_client_secret": "From the same Trakt application page. Needed only when a Client ID is filled in."
+            }
+          },
+          "suggestarr": {
+            "name": "SuggestArr",
+            "description": "Fills the SuggestArr category in the card. This is a category of its own, not a replacement for Trakt — you can run both, either, or neither. SuggestArr is free and self-hosted and needs no third-party account: it reads what you actually watched on Plex, Jellyfin or Emby and suggests titles you do not own yet. See https://github.com/giuseppe99barchetta/SuggestArr. Leave the fields empty to skip it.",
+            "data": {
+              "suggestarr_url": "SuggestArr URL (optional)",
+              "suggestarr_user": "SuggestArr username (optional)",
+              "suggestarr_password": "SuggestArr password (optional)"
+            },
+            "data_description": {
+              "suggestarr_url": "Address of the SuggestArr web interface, e.g. http://192.168.1.10:5001. Leave empty to skip SuggestArr.",
+              "suggestarr_user": "The same login you use for the SuggestArr web interface. Leave empty if SuggestArr runs with AUTH_MODE=local_bypass or disabled — then Home Assistant is trusted by its local network and no login is needed.",
+              "suggestarr_password": "Password for that login. Leave empty for the same reason as the username."
+            }
+          }
         }
       },
       "trakt_poll": {
@@ -191,14 +361,44 @@
       },
       "prowlarr": {
         "title": "Arr Stack — Prowlarr",
-        "description": "**Prowlarr** — Optional, enables indexer management and search statistics.\n\nLeave URL empty to skip.",
+        "sections": {
+          "prowlarr": {
+            "name": "Prowlarr",
+            "description": "Indexer management and search statistics. Leave empty to skip.",
+            "data": {
+              "prowlarr_url": "URL",
+              "prowlarr_api_key": "API key"
+            },
+            "data_description": {
+              "prowlarr_url": "e.g. http://192.168.1.10:9696 — default port is 9696",
+              "prowlarr_api_key": "Find it in Prowlarr → Settings → General → API Key"
+            }
+          }
+        }
+      },
+      "maintainerr": {
+        "title": "Arr Stack — Maintainerr",
+        "sections": {
+          "maintainerr": {
+            "name": "Maintainerr",
+            "description": "Rules and collections for automatic media cleanup. Maintainerr has no authentication, so only the URL is needed. Leave empty to skip.",
+            "data": {
+              "maintainerr_url": "URL"
+            },
+            "data_description": {
+              "maintainerr_url": "e.g. http://192.168.1.10:6246 — default port is 6246"
+            }
+          }
+        }
+      },
+      "metrics": {
+        "title": "Metrics collection",
+        "description": "You made it all the way to the end of the setup — so you have seen how much work went into this card. To keep improving it I need to know which parts people actually use, so the card sends one anonymous ping: the card version, whether it runs on a phone, and which services are configured (just the names — no URLs, no API keys, no titles, nothing about your library). The installation is identified by a short hash of your dashboard's hostname, so I cannot tell who you are, and the data cannot be traced back to you.\n\nYou can see for yourself what is collected: https://argalas.org/arr-stats\n\nIf you would still rather not take part, that is completely fine — your privacy is yours. Turn the switch below on and this installation stops sending anything.",
         "data": {
-          "prowlarr_url": "Prowlarr URL (optional)",
-          "prowlarr_api_key": "Prowlarr API key (optional)"
+          "metrics_opt_out": "Don't send metrics from this installation"
         },
         "data_description": {
-          "prowlarr_url": "e.g. http://192.168.1.10:9696 — default port is 9696",
-          "prowlarr_api_key": "Find it in Prowlarr → Settings → General → API Key"
+          "metrics_opt_out": "Leave it off to keep helping the project. Switch it on and this installation stops sending anything."
         }
       }
     },
@@ -227,9 +427,9 @@
       "sonarr2_bad_key": "Invalid Sonarr 2 API key — find it in your second Sonarr → Settings → General → API Key",
       "sonarr2_error": "Sonarr 2 returned an unexpected error — check the URL and that Sonarr 2 is running",
       "sonarr2_wrong_port": "Sonarr 2 not found at this address — check the URL",
-      "overseerr_bad_key": "Invalid Overseerr/Jellyseerr API key — find it in Settings → General → API Key",
-      "overseerr_error": "Overseerr/Jellyseerr returned an unexpected error — check the URL and that it is running",
-      "overseerr_wrong_port": "Overseerr/Jellyseerr not found at this address — default port is 5055. Check the URL",
+      "overseerr_bad_key": "Invalid Seerr API key — find it in Settings → General → API Key",
+      "overseerr_error": "Seerr returned an unexpected error — check the URL and that it is running",
+      "overseerr_wrong_port": "Seerr not found at this address — default port is 5055. Check the URL",
       "seerr_family_bad_credentials": "Wrong family account email or password",
       "seerr_family_login_failed": "Family account login failed — check the email and password",
       "seerr_family_is_admin": "The family account has admin permissions — use a non-admin account for the family account field",
@@ -254,7 +454,73 @@
       "trakt_connection_error": "Could not reach Trakt — check your internet connection",
       "trakt_not_authorized": "Not authorised yet — visit the Trakt URL, enter the code, then click Submit",
       "trakt_code_expired": "The authorisation code expired — go back and try again",
-      "trakt_poll_error": "Unexpected error from Trakt — try again"
+      "trakt_poll_error": "Unexpected error from Trakt — try again",
+      "maintainerr_error": "Cannot connect to Maintainerr. Check the URL and make sure Maintainerr is running.",
+      "tmdb_unauthorized": "TMDB rejected this API key",
+      "suggestarr_cannot_connect": "Could not reach SuggestArr — check the URL and that it is running",
+      "suggestarr_invalid_auth": "SuggestArr refused the credentials — check the username, password or API key",
+      "qbit_cannot_connect": "Could not reach qBittorrent — check the URL and that it is running",
+      "qbit_invalid_auth": "qBittorrent refused the credentials — check the username, password or API key",
+      "qbit_invalid_url": "The qBittorrent address must start with http:// or https://",
+      "deluge_cannot_connect": "Could not reach Deluge — check the URL and that it is running",
+      "deluge_invalid_auth": "Deluge refused the credentials — check the username, password or API key",
+      "deluge_invalid_url": "The Deluge address must start with http:// or https://",
+      "rtorrent_cannot_connect": "Could not reach rTorrent — check the URL and that it is running",
+      "rtorrent_invalid_auth": "rTorrent refused the credentials — check the username, password or API key",
+      "rtorrent_invalid_url": "The rTorrent address must start with http:// or https://",
+      "sabnzbd_cannot_connect": "Could not reach SABnzbd — check the URL and that it is running",
+      "sabnzbd_invalid_auth": "SABnzbd refused the credentials — check the username, password or API key",
+      "sabnzbd_invalid_url": "The SABnzbd address must start with http:// or https://",
+      "nzbget_cannot_connect": "Could not reach NZBGet — check the URL and that it is running",
+      "nzbget_invalid_auth": "NZBGet refused the credentials — check the username, password or API key",
+      "nzbget_invalid_url": "The NZBGet address must start with http:// or https://",
+      "radarr_cannot_connect": "Could not reach Radarr — check the URL and that it is running",
+      "radarr_invalid_auth": "Radarr refused the credentials — check the username, password or API key",
+      "radarr_invalid_url": "The Radarr address must start with http:// or https://",
+      "sonarr_cannot_connect": "Could not reach Sonarr — check the URL and that it is running",
+      "sonarr_invalid_auth": "Sonarr refused the credentials — check the username, password or API key",
+      "sonarr_invalid_url": "The Sonarr address must start with http:// or https://",
+      "radarr2_cannot_connect": "Could not reach the second Radarr — check the URL and that it is running",
+      "radarr2_invalid_auth": "the second Radarr refused the credentials — check the username, password or API key",
+      "radarr2_invalid_url": "The the second Radarr address must start with http:// or https://",
+      "sonarr2_cannot_connect": "Could not reach the second Sonarr — check the URL and that it is running",
+      "sonarr2_invalid_auth": "the second Sonarr refused the credentials — check the username, password or API key",
+      "sonarr2_invalid_url": "The the second Sonarr address must start with http:// or https://",
+      "seerr_cannot_connect": "Could not reach Seerr — check the URL and that it is running",
+      "seerr_invalid_auth": "Seerr refused the credentials — check the username, password or API key",
+      "seerr_invalid_url": "The Seerr address must start with http:// or https://",
+      "seerr_family_cannot_connect": "Could not reach the Seerr family account — check the URL and that it is running",
+      "seerr_family_invalid_auth": "the Seerr family account refused the credentials — check the username, password or API key",
+      "seerr_family_invalid_url": "The the Seerr family account address must start with http:// or https://",
+      "seerr_guest_cannot_connect": "Could not reach the Seerr guest account — check the URL and that it is running",
+      "seerr_guest_invalid_auth": "the Seerr guest account refused the credentials — check the username, password or API key",
+      "seerr_guest_invalid_url": "The the Seerr guest account address must start with http:// or https://",
+      "tmdb_cannot_connect": "Could not reach TMDB — check the URL and that it is running",
+      "tmdb_invalid_auth": "TMDB refused the credentials — check the username, password or API key",
+      "tmdb_invalid_url": "The TMDB address must start with http:// or https://",
+      "bazarr_cannot_connect": "Could not reach Bazarr — check the URL and that it is running",
+      "bazarr_invalid_auth": "Bazarr refused the credentials — check the username, password or API key",
+      "bazarr_invalid_url": "The Bazarr address must start with http:// or https://",
+      "tautulli_cannot_connect": "Could not reach Tautulli — check the URL and that it is running",
+      "tautulli_invalid_auth": "Tautulli refused the credentials — check the username, password or API key",
+      "tautulli_invalid_url": "The Tautulli address must start with http:// or https://",
+      "jellystat_cannot_connect": "Could not reach Jellystat — check the URL and that it is running",
+      "jellystat_invalid_auth": "Jellystat refused the credentials — check the username, password or API key",
+      "jellystat_invalid_url": "The Jellystat address must start with http:// or https://",
+      "tracearr_cannot_connect": "Could not reach Tracearr — check the URL and that it is running",
+      "tracearr_invalid_auth": "Tracearr refused the credentials — check the username, password or API key",
+      "tracearr_invalid_url": "The Tracearr address must start with http:// or https://",
+      "prowlarr_cannot_connect": "Could not reach Prowlarr — check the URL and that it is running",
+      "prowlarr_invalid_auth": "Prowlarr refused the credentials — check the username, password or API key",
+      "prowlarr_invalid_url": "The Prowlarr address must start with http:// or https://",
+      "maintainerr_cannot_connect": "Could not reach Maintainerr — check the URL and that it is running",
+      "maintainerr_invalid_auth": "Maintainerr refused the credentials — check the username, password or API key",
+      "maintainerr_invalid_url": "The Maintainerr address must start with http:// or https://",
+      "suggestarr_invalid_url": "The SuggestArr address must start with http:// or https://",
+      "plex_cannot_connect": "Could not reach Plex — check the URL and that it is running",
+      "plex_invalid_auth": "Plex refused the credentials — check the username, password or API key",
+      "plex_invalid_url": "The Plex address must start with http:// or https://",
+      "tracearr_error": "Tracearr returned an unexpected error — check the URL and that it is running"
     }
   },
   "selector": {

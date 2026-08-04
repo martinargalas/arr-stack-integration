@@ -58,12 +58,19 @@ CONF_JELLYSTAT_KEY = "jellystat_api_key"
 CONF_TRACEARR_URL           = "tracearr_url"
 CONF_TRACEARR_KEY           = "tracearr_api_key"
 CONF_TRACEARR_REFRESH_TOKEN = "tracearr_refresh_token"
+CONF_TRACEARR_SESSION_COOKIE = "tracearr_session_cookie"
 
 CONF_TRAKT_CLIENT_ID     = "trakt_client_id"
 CONF_TRAKT_CLIENT_SECRET = "trakt_client_secret"
 CONF_TRAKT_ACCESS_TOKEN  = "trakt_access_token"
 CONF_TRAKT_REFRESH_TOKEN = "trakt_refresh_token"
 CONF_TRAKT_EXPIRES_AT    = "trakt_expires_at"
+
+# SuggestArr — self-hosted recommendations from actual watch history.
+# Credentials are optional: installs running AUTH_MODE=local_bypass need none.
+CONF_SUGGESTARR_URL      = "suggestarr_url"
+CONF_SUGGESTARR_USER     = "suggestarr_user"
+CONF_SUGGESTARR_PASS     = "suggestarr_password"
 
 TRAKT_API_BASE   = "https://api.trakt.tv"
 TRAKT_API_VER    = "2"
@@ -73,8 +80,16 @@ PLEX_CLIENT_ID  = "arr-stack-card"
 CONF_PROWLARR_URL = "prowlarr_url"
 CONF_PROWLARR_KEY = "prowlarr_api_key"
 
+CONF_MAINTAINERR_URL = "maintainerr_url"
+
 CONF_SKIP_SSL_VERIFY = "skip_ssl_verify"
 CONF_DEBUG_LOGGING   = "debug_logging"
 
+CONF_TMDB_KEY = "tmdb_api_key"
+
+# Anonymous usage ping — opt-out, surfaced only when reconfiguring
+CONF_METRICS_OPT_OUT = "metrics_opt_out"
+
+# Fallback for entries created before the key became configurable
 TMDB_API_KEY = "da641d34100bf2ab90904ca84d424ef6"
 TMDB_BASE    = "https://api.themoviedb.org/3"
