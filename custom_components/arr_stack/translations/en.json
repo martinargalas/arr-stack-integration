@@ -329,7 +329,7 @@
         "sections": {
           "trakt": {
             "name": "Trakt.tv",
-            "description": "Fills the Trakt Recommended category in the card. Trakt VIP is required: since July 2026 only VIP members can register an API application, and applications belonging to free accounts were removed, so an old Client ID now answers 403. Without VIP leave both fields empty and the card hides this category. With VIP, create an application at https://trakt.tv/oauth/applications/new — any name, redirect URI urn:ietf:wg:oauth:2.0:oob — and copy its Client ID and Client Secret into the fields below.",
+            "description": "Fills the Trakt Recommended category in the card. Trakt VIP is required: since July 2026 only VIP members can register an API application, and applications belonging to free accounts were removed, so an old Client ID now answers 403. Without VIP leave both fields empty and the card hides this category. With VIP, create an application on trakt.tv under Settings, Your API Apps — any name, redirect URI urn:ietf:wg:oauth:2.0:oob — and copy its Client ID and Client Secret into the fields below.",
             "data": {
               "trakt_client_id": "Trakt Client ID (optional, VIP only)",
               "trakt_client_secret": "Trakt Client Secret (optional, VIP only)"
@@ -341,7 +341,7 @@
           },
           "suggestarr": {
             "name": "SuggestArr",
-            "description": "Fills the SuggestArr category in the card. This is a category of its own, not a replacement for Trakt — you can run both, either, or neither. SuggestArr is free and self-hosted and needs no third-party account: it reads what you actually watched on Plex, Jellyfin or Emby and suggests titles you do not own yet. See https://github.com/giuseppe99barchetta/SuggestArr. Leave the fields empty to skip it.",
+            "description": "Fills the SuggestArr category in the card. This is a category of its own, not a replacement for Trakt — you can run both, either, or neither. SuggestArr is free and self-hosted and needs no third-party account: it reads what you actually watched on Plex, Jellyfin or Emby and suggests titles you do not own yet. Find it on GitHub under giuseppe99barchetta/SuggestArr. Leave the fields empty to skip it.",
             "data": {
               "suggestarr_url": "SuggestArr URL (optional)",
               "suggestarr_user": "SuggestArr username (optional)",
@@ -393,7 +393,7 @@
       },
       "metrics": {
         "title": "Metrics collection",
-        "description": "You made it all the way to the end of the setup — so you have seen how much work went into this card. To keep improving it I need to know which parts people actually use, so the card sends one anonymous ping: the card version, whether it runs on a phone, and which services are configured (just the names — no URLs, no API keys, no titles, nothing about your library). The installation is identified by a short hash of your dashboard's hostname, so I cannot tell who you are, and the data cannot be traced back to you.\n\nYou can see for yourself what is collected: https://argalas.org/arr-stats\n\nIf you would still rather not take part, that is completely fine — your privacy is yours. Turn the switch below on and this installation stops sending anything.",
+        "description": "You made it all the way to the end of the setup — so you have seen how much work went into this card. To keep improving it I need to know which parts people actually use, so the card sends one anonymous ping: the card version, whether it runs on a phone, and which services are configured (just the names — no URLs, no API keys, no titles, nothing about your library). The installation is identified by a short hash of your dashboard's hostname, so I cannot tell who you are, and the data cannot be traced back to you. The full breakdown is public — the address is in the integration README. If you would still rather not take part, that is completely fine — your privacy is yours. Turn the switch below on and this installation stops sending anything.",
         "data": {
           "metrics_opt_out": "Don't send metrics from this installation"
         },
