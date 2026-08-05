@@ -279,8 +279,9 @@ class ArrStackProxyView(HomeAssistantView):
     async def _qbit_login(self, session: aiohttp.ClientSession, ssl=None, debug=False) -> None:
         """Přihlásí se do qBit (nastaví session cookie).
 
-        qBit login endpoint vrací 200 i při špatných credentials (body "Fails."),
-        a 403 při IP banu (ochrana proti brute-force, default 5 pokusů/30min).
+        Úspěch: qBit 4.x vrací 200 s body "Ok.", qBit 5.x vrací 204 bez body.
+        Špatné credentials: 4.x vrací 200 s body "Fails.", 5.x vrací 401.
+        IP ban (ochrana proti brute-force, default 5 pokusů/30min) vrací 403.
         Bez kontroly response je tohle neviditelné — downstream volání pak
         dostanou neautentizovanou odpověď a JSON parse selže s nejasnou chybou.
         """
@@ -290,7 +291,7 @@ class ArrStackProxyView(HomeAssistantView):
             "password": self._cfg.get(CONF_QBIT_PASS, ""),
         }, ssl=ssl) as r:
             body = await r.read()
-            if r.status != 200 or body != b"Ok.":
+            if not (r.status == 204 or (r.status == 200 and body == b"Ok.")):
                 _LOGGER.warning(
                     "arr_stack qbit login failed — status=%s body=%s (check credentials, "
                     "IP ban from repeated failed logins, or 'Host header validation' in "
