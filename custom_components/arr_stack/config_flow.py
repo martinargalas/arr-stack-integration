@@ -156,14 +156,19 @@ async def _test_qbit(session: aiohttp.ClientSession, url: str, user: str, passwo
             ssl=ssl,
         ) as r:
             text = await r.text()
-            if r.status in (200, 204) or text.strip().lower() in ("ok.", "ok"):
+            body = text.strip()
+            # Body first: qBit 4.x answers a wrong password with 200 and "Fails.",
+            # so trusting the status alone let bad credentials through setup and
+            # only surfaced later at runtime. 5.x answers 204 on success and 401
+            # on a wrong password, so both wire formats are covered here.
+            if "Fails" in body:
+                return "qbit_bad_credentials"
+            if r.status == 204 or (r.status == 200 and body.lower() in ("ok.", "ok")):
                 return None
-            if text.strip() == "Fails." or r.status == 403 and "Fails" in text:
+            if r.status == 401 or "Unauthorized" in text:
                 return "qbit_bad_credentials"
             if r.status == 403 or "Forbidden" in text:
                 return "qbit_forbidden"
-            if r.status == 401 or "Unauthorized" in text:
-                return "qbit_bad_credentials"
             return "qbit_login_failed"
     except Exception as e:
         return _log_exc("qbittorrent", test_url, e)
