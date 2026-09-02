@@ -468,9 +468,41 @@ class ArrStackProxyView(HomeAssistantView):
     async def delete(self, request: web.Request, service: str, path: str) -> web.Response:
         return await self._handle(request, service, path, "DELETE")
 
+    # Everything that writes is for admins. The card hides those controls from
+    # everyone else, but that is a decision made in the browser: without a check
+    # here a household account could delete a film, with files, using the token
+    # it legitimately holds. Listed below is what a non-admin genuinely does —
+    # request something, take that request back, search, and drive a player.
+    # Transport control stays open because Home Assistant's own media_player
+    # services are available to those users anyway; blocking it here would be
+    # theatre. Ending someone else's stream is not on the list.
+    _NON_ADMIN_WRITES = frozenset({
+        ("overseerr", "request"),
+        ("overseerr", "request_delete"),
+        ("overseerr", "search"),
+        ("tmdb", "search"),
+        ("plex", "player"),
+    })
+
+    def _may_write(self, request: web.Request, service: str, path: str) -> bool:
+        user = request.get("hass_user")
+        if user is None:
+            return False
+        if user.is_admin:
+            return True
+        return (service, path) in self._NON_ADMIN_WRITES
+
     async def _handle(
         self, request: web.Request, service: str, path: str, method: str
     ) -> web.Response:
+        if method != "GET" and not self._may_write(request, service, path):
+            _LOGGER.warning(
+                "arr_stack denied %s %s/%s for non-admin user", method, service, path
+            )
+            return web.json_response(
+                {"error": "This action requires a Home Assistant admin account."},
+                status=403,
+            )
         try:
             return await self._route(request, service, path, method)
         except aiohttp.ClientConnectorError as exc:
