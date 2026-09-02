@@ -90,6 +90,4 @@ CONF_TMDB_KEY = "tmdb_api_key"
 # Anonymous usage ping — opt-out, surfaced only when reconfiguring
 CONF_METRICS_OPT_OUT = "metrics_opt_out"
 
-# Fallback for entries created before the key became configurable
-TMDB_API_KEY = "da641d34100bf2ab90904ca84d424ef6"
-TMDB_BASE    = "https://api.themoviedb.org/3"
+TMDB_BASE = "https://api.themoviedb.org/3"

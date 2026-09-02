@@ -19,17 +19,17 @@ A Home Assistant custom integration that acts as a secure server-side proxy betw
 ---
 
 > [!IMPORTANT]
-> ### Your own TMDB API key — needed by 1 September 2026
+> ### Your own TMDB API key
 >
 > **If you use Seerr (Overseerr / Jellyseerr), this does not affect you.** Posters, search and title details all come through Seerr, and nothing changes for you.
 >
-> Everyone else needs a free TMDB API key by **1 September 2026**. Until then everything keeps working as it always has. The reason is simple: the card is going through the official HACS review, and the rules there do not allow a shared key to be built into the code, so it has to go.
+> Everyone else needs a free TMDB API key. The integration used to ship with a shared one built in, but the official HACS rules do not allow that, so it has been removed.
 >
 > Getting one takes a minute at [themoviedb.org](https://www.themoviedb.org) → Settings → API — it is free and no payment details are asked for. Then paste it into **Settings → Devices & Services → Arr Stack → Reconfigure → Discovery**.
 >
-> Without a key after that date the posters, ratings, cast, trailers and the Trending and Popular rows stop loading. Everything tied to your own libraries — Radarr, Sonarr, downloads, the calendar — carries on regardless.
+> Without a key the posters, ratings, cast, trailers and the Trending and Popular rows stop loading. Everything tied to your own libraries — Radarr, Sonarr, downloads, the calendar — carries on regardless.
 >
-> Sorry for the errand. The card never asked you for anything before, and the notice disappears on its own once a key is filled in or Seerr is set up.
+> Sorry for the errand. The card never asked you for anything before, and the notice in the card disappears on its own once a key is filled in or Seerr is set up.
 
 ---
 
@@ -191,7 +191,7 @@ Configure a second Radarr and/or Sonarr instance — useful for HD + 4K setups.
 
 Where the card gets posters, metadata and requests from. This step has four parts, all optional.
 
-**TMDB** — needed only if you do **not** use Seerr. See the notice at the top of this page: fill in your own key before **1 September 2026** and posters, ratings, cast, trailers and the Trending and Popular rows keep working. With Seerr configured you can skip this section entirely.
+**TMDB** — needed only if you do **not** use Seerr. See the notice at the top of this page: fill in your own key and posters, ratings, cast, trailers and the Trending and Popular rows keep working. With Seerr configured you can skip this section entirely.
 
 | Field | Notes |
 |-------|-------|

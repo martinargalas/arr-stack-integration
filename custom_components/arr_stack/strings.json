@@ -185,13 +185,13 @@
         "description": "Where the card gets posters, metadata and requests from. Everything here is optional.",
         "sections": {
           "tmdb": {
-            "name": "TMDB — needed by 1 September 2026 if you do not use Seerr",
-            "description": "Only needed when Seerr is not configured. With a Seerr URL filled in below, the discovery rows, search and title details all come from Seerr and you can ignore this section. Otherwise, fill in your own TMDB API key before 1 September 2026 — after that date the posters, ratings, cast, trailers and the Trending and Popular rows stop working without one.",
+            "name": "TMDB — needed if you do not use Seerr",
+            "description": "Only needed when Seerr is not configured. With a Seerr URL filled in below, the discovery rows, search and title details all come from Seerr and you can ignore this section. Otherwise, fill in your own TMDB API key — without one the posters, ratings, cast, trailers and the Trending and Popular rows do not work.",
             "data": {
               "tmdb_api_key": "API key"
             },
             "data_description": {
-              "tmdb_api_key": "Without Seerr this key powers posters, ratings, cast, trailers and the Trending/Popular rows. Get one free at themoviedb.org → Settings → API — it takes a minute and no payment details are needed. Required from 1 September 2026."
+              "tmdb_api_key": "Without Seerr this key powers posters, ratings, cast, trailers and the Trending/Popular rows. Get one free at themoviedb.org → Settings → API — it takes a minute and no payment details are needed."
             }
           },
           "seerr": {
