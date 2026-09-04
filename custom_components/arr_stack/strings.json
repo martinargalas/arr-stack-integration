@@ -24,7 +24,8 @@
           "enable_discovery": "Discovery / Seerr",
           "enable_plex": "Plex (playback control) / Emby",
           "enable_jellyfin": "Streaming stats / Tautulli / Jellystat / Tracearr",
-          "enable_trakt": "Recommendations / Trakt.tv / SuggestArr",
+          "enable_trakt": "Recommendations / Trakt.tv / SuggestArr / Last.fm",
+          "enable_lidarr": "Lidarr (music library)",
           "enable_prowlarr": "Prowlarr (indexer management)",
           "enable_maintainerr": "Maintainerr (automatic media cleanup)",
           "enable_metrics": "Metrics collection"
@@ -329,7 +330,7 @@
         "sections": {
           "trakt": {
             "name": "Trakt.tv",
-            "description": "Fills the Trakt Recommended category in the card. Trakt VIP is required: since July 2026 only VIP members can register an API application, and applications belonging to free accounts were removed, so an old Client ID now answers 403. Without VIP leave both fields empty and the card hides this category. With VIP, create an application on trakt.tv under Settings, Your API Apps — any name, redirect URI urn:ietf:wg:oauth:2.0:oob — and copy its Client ID and Client Secret into the fields below.",
+            "description": "One of the sources behind the card's Recommendations row. Trakt VIP is required: since July 2026 only VIP members can register an API application, and applications belonging to free accounts were removed, so an old Client ID now answers 403. Without VIP leave both fields empty. With VIP, create an application on trakt.tv under Settings, Your API Apps — any name, redirect URI urn:ietf:wg:oauth:2.0:oob — and copy its Client ID and Client Secret into the fields below.",
             "data": {
               "trakt_client_id": "Trakt Client ID (optional, VIP only)",
               "trakt_client_secret": "Trakt Client Secret (optional, VIP only)"
@@ -341,7 +342,7 @@
           },
           "suggestarr": {
             "name": "SuggestArr",
-            "description": "Fills the SuggestArr category in the card. This is a category of its own, not a replacement for Trakt — you can run both, either, or neither. SuggestArr is free and self-hosted and needs no third-party account: it reads what you actually watched on Plex, Jellyfin or Emby and suggests titles you do not own yet. Find it on GitHub under giuseppe99barchetta/SuggestArr. Leave the fields empty to skip it.",
+            "description": "The second source behind the Recommendations row, alongside Trakt — run both, either, or neither; the card's own settings are where you choose which of the two it draws on. SuggestArr is free and self-hosted and needs no third-party account: it reads what you actually watched on Plex, Jellyfin or Emby and suggests titles you do not own yet. Find it on GitHub under giuseppe99barchetta/SuggestArr. Leave the fields empty to skip it.",
             "data": {
               "suggestarr_url": "SuggestArr URL (optional)",
               "suggestarr_user": "SuggestArr username (optional)",
@@ -352,12 +353,41 @@
               "suggestarr_user": "The same login you use for the SuggestArr web interface. Leave empty if SuggestArr runs with AUTH_MODE=local_bypass or disabled — then Home Assistant is trusted by its local network and no login is needed.",
               "suggestarr_password": "Password for that login. Leave empty for the same reason as the username."
             }
+          },
+          "lastfm": {
+            "name": "Last.fm",
+            "description": "The music in the Recommendations row: artists you do not own yet, next to the film and show suggestions. This one needs Lidarr — without it there is no library to compare against and no way to add an artist, so the music side simply does not appear. Seeds come from what you actually listen to: your Last.fm scrobbles when you give a username — Plexamp, Spotify, or anything else that scrobbles — and otherwise your own server's play history. A free API key is enough; create one at last.fm/api/account/create.",
+            "data": {
+              "lastfm_api_key": "Last.fm API key (optional)",
+              "lastfm_user": "Last.fm username (optional)"
+            },
+            "data_description": {
+              "lastfm_api_key": "From last.fm/api/account/create — free for personal use. Only the API key is needed; the shared secret is for scrobbling, which this card never does.",
+              "lastfm_user": "Your Last.fm name, if you scrobble. Without it the suggestions are seeded from what was played on your own server instead."
+            }
           }
         }
       },
       "trakt_poll": {
         "title": "Arr Stack — Trakt authorisation",
         "description": "Open **{verify_url}** and enter code:\n\n# `{user_code}`\n\nOnce you have authorised the app on Trakt, click **Submit** to complete setup."
+      },
+      "lidarr": {
+        "title": "Arr Stack — Lidarr",
+        "sections": {
+          "lidarr": {
+            "name": "Lidarr",
+            "description": "Your music library — the artists, albums and tracks the card shows, searches and adds to. Optional: leave both fields empty to skip it and the card carries no music at all.",
+            "data": {
+              "lidarr_url": "URL",
+              "lidarr_api_key": "API key"
+            },
+            "data_description": {
+              "lidarr_url": "e.g. http://192.168.1.10:8686 — default port is 8686",
+              "lidarr_api_key": "Find it in Lidarr → Settings → General → API Key"
+            }
+          }
+        }
       },
       "prowlarr": {
         "title": "Arr Stack — Prowlarr",
@@ -520,7 +550,10 @@
       "plex_cannot_connect": "Could not reach Plex — check the URL and that it is running",
       "plex_invalid_auth": "Plex refused the credentials — check the username, password or API key",
       "plex_invalid_url": "The Plex address must start with http:// or https://",
-      "tracearr_error": "Tracearr returned an unexpected error — check the URL and that it is running"
+      "tracearr_error": "Tracearr returned an unexpected error — check the URL and that it is running",
+      "lidarr_cannot_connect": "Could not reach Prowlarr — check the URL and that it is running",
+      "lidarr_invalid_auth": "Prowlarr refused the credentials — check the username, password or API key",
+      "lidarr_invalid_url": "The Prowlarr address must start with http:// or https://"
     }
   },
   "selector": {

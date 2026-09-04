@@ -3,6 +3,9 @@ import asyncio
 import base64
 import itertools
 import logging
+import math
+import re
+import time as _time
 import xmlrpc.client as _xmlrpc
 from urllib.parse import quote, urlparse
 import aiohttp
@@ -10,6 +13,9 @@ from aiohttp import web
 import yarl
 
 _LOGGER = logging.getLogger(__name__)
+
+# MusicBrainz ids are uuids; anything else is not worth a round trip.
+_MBID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 def _arr_json(raw: bytes, status: int) -> web.Response:
     """Pass an *arr response through, filling in an empty body.
@@ -22,6 +28,27 @@ def _arr_json(raw: bytes, status: int) -> web.Response:
     if not raw or not raw.strip():
         return web.json_response({"ok": True}, status=200 if status == 204 else status)
     return web.Response(body=raw, content_type="application/json", status=status)
+
+
+def _shrink_image(raw: bytes, width: int, ct: str) -> tuple[bytes, str]:
+    """Downscale a cover to `width`, in a worker thread. Returns the original
+    bytes unchanged if Pillow is missing or the image is already small enough —
+    a cover that cannot be shrunk is still a cover worth serving."""
+    try:
+        from io import BytesIO  # noqa: PLC0415
+
+        from PIL import Image  # noqa: PLC0415
+
+        img = Image.open(BytesIO(raw))
+        if img.width <= width:
+            return raw, ct
+        height = max(1, round(img.height * width / img.width))
+        img = img.convert("RGB").resize((width, height), Image.LANCZOS)
+        out = BytesIO()
+        img.save(out, format="JPEG", quality=82, optimize=True, progressive=True)
+        return out.getvalue(), "image/jpeg"
+    except Exception:  # noqa: BLE001 — the full-size image is an acceptable answer
+        return raw, ct
 
 
 def _host_port(url: str) -> str:
@@ -186,6 +213,10 @@ from .const import (
     CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET,
     CONF_TRAKT_ACCESS_TOKEN, CONF_TRAKT_REFRESH_TOKEN, CONF_TRAKT_EXPIRES_AT,
     TRAKT_API_BASE, TRAKT_API_VER,
+    CONF_LIDARR_URL,
+    CONF_LASTFM_KEY,
+    CONF_LASTFM_USER,
+    CONF_LIDARR_KEY,
     CONF_PROWLARR_URL, CONF_PROWLARR_KEY,
     CONF_MAINTAINERR_URL,
     CONF_SKIP_SSL_VERIFY,
@@ -482,6 +513,8 @@ class ArrStackProxyView(HomeAssistantView):
         ("overseerr", "search"),
         ("tmdb", "search"),
         ("plex", "player"),
+        ("lastfm", "skips"),
+        ("lastfm", "likes"),
     })
 
     def _may_write(self, request: web.Request, service: str, path: str) -> bool:
@@ -544,6 +577,9 @@ class ArrStackProxyView(HomeAssistantView):
                 "jellystat":  bool(cfg.get(CONF_JELLYSTAT_URL)),
                 "tracearr":   bool(cfg.get(CONF_TRACEARR_URL)),
                 "trakt":      bool(cfg.get(CONF_TRAKT_CLIENT_ID)),
+                "lidarr":     bool(cfg.get(CONF_LIDARR_URL)),
+                "lastfm":     bool(cfg.get(CONF_LASTFM_KEY)),
+                "lastfmUser": bool(cfg.get(CONF_LASTFM_KEY) and cfg.get(CONF_LASTFM_USER)),
                 "prowlarr":   bool(cfg.get(CONF_PROWLARR_URL)),
                 "maintainerr": bool(cfg.get(CONF_MAINTAINERR_URL)),
                 # False means this install still rides the bundled shared key —
@@ -2406,6 +2442,56 @@ class ArrStackProxyView(HomeAssistantView):
                     await r.read()
                     return web.json_response({"ok": r.status < 400, "status": r.status}, status=200)
 
+            # GET plex/artist?name=X → the artist's Plex item, found by name.
+            # Music carries no TMDB or TVDB id, so the guid search the lookup
+            # below is built on has nothing to match; a title search inside the
+            # artist sections is what is left, and it is exact enough — Plex
+            # returns the artists whose name contains the term.
+            if path == "artist" and method == "GET":
+                name = request.rel_url.query.get("name", "").strip()
+                if not name:
+                    return web.json_response({"error": "name required"}, status=400)
+                try:
+                    async with http.get(
+                        f"{base}/library/sections",
+                        headers=plex_hdrs,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                        ssl=ssl,
+                    ) as r:
+                        sections = ((await r.json(content_type=None)) or {}).get(
+                            "MediaContainer", {}
+                        ).get("Directory", [])
+                except Exception:
+                    sections = []
+                for sec in sections:
+                    if sec.get("type") != "artist":
+                        continue
+                    try:
+                        async with http.get(
+                            f"{base}/library/sections/{sec.get('key')}/all",
+                            headers=plex_hdrs,
+                            params={"type": "8", "title": name},
+                            timeout=aiohttp.ClientTimeout(total=10),
+                            ssl=ssl,
+                        ) as r:
+                            items = ((await r.json(content_type=None)) or {}).get(
+                                "MediaContainer", {}
+                            ).get("Metadata", [])
+                    except Exception:
+                        continue
+                    exact = next(
+                        (i for i in items if (i.get("title") or "").lower() == name.lower()),
+                        None,
+                    ) or (items[0] if items else None)
+                    if exact:
+                        return web.json_response({
+                            "plex_key": exact.get("ratingKey"),
+                            "title": exact.get("title"),
+                            "library": sec.get("title"),
+                        })
+                # Ordinary answer: the artist may simply not be on this server.
+                return web.json_response({})
+
             # GET plex/lookup?tmdbId=X or ?tvdbId=X → find Plex item by external ID
             # Tries multiple GUID formats (new agent, old agent) then per-section fallback.
             if path == "lookup" and method == "GET":
@@ -2766,6 +2852,374 @@ class ArrStackProxyView(HomeAssistantView):
                     return _arr_json(await r.read(), r.status)
 
         # ════════════════════════════════════════════
+        # Last.fm — similar artists
+        # ════════════════════════════════════════════
+        elif service == "lastfm":
+            api_key = cfg.get(CONF_LASTFM_KEY, "").strip()
+            if not api_key:
+                return web.json_response({"error": "Last.fm not configured"}, status=503)
+
+            if path == "top" and method == "GET":
+                user = cfg.get(CONF_LASTFM_USER, "").strip()
+                if not user:
+                    return web.json_response({"artists": []})
+                params = {
+                    "method": "user.gettopartists",
+                    "format": "json",
+                    "api_key": api_key,
+                    "user": user,
+                    # 7day, 1month, 3month, 6month, 12month, overall
+                    "period": request.query.get("period", "3month"),
+                    "limit": request.query.get("limit", "20"),
+                }
+                try:
+                    async with http.get(
+                        "https://ws.audioscrobbler.com/2.0/",
+                        params=params,
+                        timeout=aiohttp.ClientTimeout(total=15),
+                    ) as r:
+                        d = await r.json(content_type=None)
+                except Exception as e:
+                    _LOGGER.debug("arr_stack lastfm top failed: %s", e)
+                    return web.json_response({"artists": []})
+                raw = ((d or {}).get("topartists") or {}).get("artist") or []
+                return web.json_response({"artists": [
+                    {
+                        "name": a.get("name"),
+                        "mbid": a.get("mbid") or None,
+                        "plays": int(a.get("playcount") or 0),
+                    }
+                    for a in raw if a.get("name")
+                ]})
+
+            if path in ("skips", "likes") and method in ("GET", "POST"):
+                from homeassistant.helpers.storage import Store  # noqa: PLC0415
+                store = Store(self._hass, 1, f"arr_stack.music_{path}")
+                data = await store.async_load() or {}
+                who = getattr(request.get("hass_user"), "id", "") or "anon"
+                mine = list(data.get(who) or [])
+                if method == "GET":
+                    return web.json_response({path: mine})
+                body = await request.json()
+                mbid = str(body.get("mbid") or "").strip().lower()
+                if not _MBID_RE.match(mbid):
+                    return web.json_response({"error": "mbid required"}, status=400)
+                if body.get("undo"):
+                    mine = [m for m in mine if m != mbid]
+                elif mbid not in mine:
+                    mine.append(mbid)
+                    mine = mine[-500:]
+                data[who] = mine
+                await store.async_save(data)
+                self._hass.data.setdefault(DOMAIN, {}).pop("_lfm_sug", None)
+                return web.json_response({path: mine})
+
+            if path == "suggested" and method == "GET":
+                want = max(4, min(40, int(request.query.get("limit", "20") or 20)))
+                user = cfg.get(CONF_LASTFM_USER, "").strip()
+                store = self._hass.data.setdefault(DOMAIN, {}).setdefault("_lfm_sug", {})
+                cache = store.get(user or "@server") or {}
+                fresh = cache.get("at", 0) + 6 * 3600 > _time.time()
+                if fresh and cache.get("items") and not request.query.get("refresh"):
+                    return web.json_response(cache["items"][:want])
+                li_url = cfg.get(CONF_LIDARR_URL, "").rstrip("/")
+                li_key = cfg.get(CONF_LIDARR_KEY, "")
+                if not li_url or not li_key:
+                    return web.json_response([])
+                li_hdrs = {"X-Api-Key": li_key, "Accept": "application/json"}
+
+                async def _lfm(params):
+                    try:
+                        async with http.get(
+                            "https://ws.audioscrobbler.com/2.0/",
+                            params={**params, "format": "json", "api_key": api_key},
+                            timeout=aiohttp.ClientTimeout(total=15),
+                        ) as r:
+                            return await r.json(content_type=None)
+                    except Exception:
+                        return {}
+
+                # Who is already here, and what they are worth as a seed.
+                try:
+                    async with http.get(f"{li_url}/api/v1/artist", headers=li_hdrs, ssl=ssl) as r:
+                        own = await r.json(content_type=None) if r.status == 200 else []
+                except Exception:
+                    own = []
+                own_mb = {str(a.get("foreignArtistId") or "").lower() for a in own}
+                own_nm = {str(a.get("artistName") or "").strip().lower() for a in own}
+
+                # Whatever this reader has said no to counts as owned for the
+                # purpose of filtering: it never comes back.
+                from homeassistant.helpers.storage import Store  # noqa: PLC0415
+                who = getattr(request.get("hass_user"), "id", "") or "anon"
+                skips_all = await Store(self._hass, 1, "arr_stack.music_skips").async_load() or {}
+                likes_all = await Store(self._hass, 1, "arr_stack.music_likes").async_load() or {}
+                liked = [str(m).lower() for m in (likes_all.get(who) or [])]
+                own_mb |= {str(m).lower() for m in (skips_all.get(who) or [])}
+                own_mb |= set(liked)
+
+                seeds = []
+                if user:
+                    d = await _lfm({
+                        "method": "user.gettopartists", "user": user,
+                        "period": request.query.get("period", "3month"), "limit": "12",
+                    })
+                    for a in ((d or {}).get("topartists") or {}).get("artist") or []:
+                        if a.get("name"):
+                            seeds.append((a["name"], a.get("mbid") or "", int(a.get("playcount") or 1)))
+                if not seeds:
+                    played: dict[str, int] = {}
+
+                    tt_url = cfg.get(CONF_TAUTULLI_URL, "").rstrip("/")
+                    for _sfx in ("/api/v2", "/home", "/settings", "/history", "/recently_added"):
+                        if tt_url.endswith(_sfx):
+                            tt_url = tt_url[: -len(_sfx)].rstrip("/")
+                    tt_key = cfg.get(CONF_TAUTULLI_KEY, "")
+                    if tt_url and tt_key:
+                        try:
+                            async with http.get(
+                                f"{tt_url}/api/v2",
+                                params={
+                                    "apikey": tt_key, "cmd": "get_history",
+                                    "media_type": "track", "length": "500",
+                                },
+                                timeout=aiohttp.ClientTimeout(total=20),
+                                ssl=ssl,
+                            ) as r:
+                                d = await r.json(content_type=None) if r.status == 200 else {}
+                            for row in ((d.get("response") or {}).get("data") or {}).get("data") or []:
+                                who = (row.get("grandparent_title") or "").strip()
+                                if who:
+                                    played[who] = played.get(who, 0) + 1
+                        except Exception:
+                            pass
+
+                    if not played:
+                        px_token = cfg.get(CONF_PLEX_TOKEN, "")
+                        px_base = cfg.get(CONF_PLEX_URL, "").rstrip("/")
+                        if px_token and not px_base:
+                            if not self._plex_url_cache:
+                                self._plex_url_cache = await _plex_detect_server(http, px_token)
+                            px_base = self._plex_url_cache or ""
+                        if px_token and px_base:
+                            px_hdrs = {
+                                "X-Plex-Token": px_token,
+                                "X-Plex-Client-Identifier": PLEX_CLIENT_ID,
+                                "Accept": "application/json",
+                            }
+                            try:
+                                async with http.get(
+                                    f"{px_base}/library/sections",
+                                    headers=px_hdrs,
+                                    timeout=aiohttp.ClientTimeout(total=10),
+                                    ssl=ssl,
+                                ) as r:
+                                    secs = ((await r.json(content_type=None)) or {}).get(
+                                        "MediaContainer", {}
+                                    ).get("Directory", [])
+                            except Exception:
+                                secs = []
+                            for sec in secs:
+                                if sec.get("type") != "artist":
+                                    continue
+                                try:
+                                    async with http.get(
+                                        f"{px_base}/status/sessions/history/all",
+                                        headers=px_hdrs,
+                                        params={
+                                            "librarySectionID": str(sec.get("key")),
+                                            "sort": "viewedAt:desc",
+                                            "X-Plex-Container-Size": "500",
+                                        },
+                                        timeout=aiohttp.ClientTimeout(total=20),
+                                        ssl=ssl,
+                                    ) as r:
+                                        rows = ((await r.json(content_type=None)) or {}).get(
+                                            "MediaContainer", {}
+                                        ).get("Metadata", []) or []
+                                except Exception:
+                                    rows = []
+                                for row in rows:
+                                    who = (row.get("grandparentTitle") or "").strip()
+                                    if who:
+                                        played[who] = played.get(who, 0) + 1
+
+                    for who, n in sorted(played.items(), key=lambda kv: -kv[1])[:8]:
+                        # The mbid comes from the library where it is known; a
+                        # name is enough for Last.fm either way.
+                        mb = next(
+                            (str(a.get("foreignArtistId") or "") for a in own
+                             if str(a.get("artistName") or "").strip().lower() == who.lower()),
+                            "",
+                        )
+                        seeds.append((who, mb, n))
+
+                if not seeds:
+                    # Nothing has been played here at all: the library stands in,
+                    # newest first.
+                    for a in sorted(own, key=lambda x: str(x.get("added") or ""), reverse=True)[:8]:
+                        if a.get("artistName"):
+                            seeds.append((a["artistName"], str(a.get("foreignArtistId") or ""), 1))
+                if liked:
+                    by_mb = {str(a.get("foreignArtistId") or "").lower(): a for a in own}
+                    picked = []
+                    for mb in reversed(liked[-4:]):
+                        hit = by_mb.get(mb)
+                        picked.append((hit.get("artistName") if hit else "", mb, 3))
+                    seeds = [p for p in picked if p[1]] + seeds
+                seeds = seeds[:8]
+                if not seeds:
+                    return web.json_response([])
+
+                async def _similar(seed):
+                    name, mbid, plays = seed
+                    params = {"method": "artist.getsimilar", "limit": "25", "autocorrect": "1"}
+                    if _MBID_RE.match(mbid.lower()):
+                        params["mbid"] = mbid.lower()
+                    else:
+                        params["artist"] = name
+                    d = await _lfm(params)
+                    return name, plays, ((d or {}).get("similarartists") or {}).get("artist") or []
+
+                results = await asyncio.gather(*[_similar(s) for s in seeds])
+
+                # Every similar artist is scored; the rank it held within its own
+                # seed's list is kept so a heavily played seed can be held back
+                # from filling the row on its own without being thrown away —
+                # what used to be a hard three apiece, which left the row with a
+                # handful once the owned and the skipped were filtered out.
+                scored: dict[str, dict] = {}
+                for name, plays, arr in results:
+                    weight = math.sqrt(max(1, plays))
+                    rank = 0
+                    for a in arr:
+                        nm = (a.get("name") or "").strip()
+                        mb = (a.get("mbid") or "").strip().lower()
+                        if not nm or nm.lower() in own_nm or (mb and mb in own_mb):
+                            continue
+                        key = mb or nm.lower()
+                        row = scored.setdefault(key, {
+                            "name": nm, "mbid": mb or None, "score": 0.0,
+                            "seed": name, "rank": rank,
+                        })
+                        row["rank"] = min(row["rank"], rank)
+                        rank += 1
+                        row["score"] += float(a.get("match") or 0) * weight
+                        if float(a.get("match") or 0) * weight >= row["score"] / 2:
+                            row["seed"] = name
+
+                # Best three of each seed first, then the rest by score: the row
+                # stays varied while there is variety to be had, and still fills
+                # up when most of what came back is already in the library.
+                ranked = sorted(scored.values(), key=lambda r: -r["score"])
+                top = [r for r in ranked if r["rank"] < 3] + [r for r in ranked if r["rank"] >= 3]
+
+                # Lidarr's own lookup carries the artwork, the rating and the
+                # overview — the same record the card draws everywhere else.
+                async def _enrich(row):
+                    term = f"lidarr:{row['mbid']}" if row.get("mbid") else row["name"]
+                    try:
+                        async with http.get(
+                            f"{li_url}/api/v1/artist/lookup",
+                            params={"term": term},
+                            headers=li_hdrs,
+                            timeout=aiohttp.ClientTimeout(total=20),
+                            ssl=ssl,
+                        ) as r:
+                            hits = await r.json(content_type=None) if r.status == 200 else []
+                    except Exception:
+                        hits = []
+                    hit = None
+                    for h in hits or []:
+                        if row.get("mbid") and str(h.get("foreignArtistId") or "").lower() == row["mbid"]:
+                            hit = h
+                            break
+                    if hit is None and hits:
+                        hit = hits[0]
+                    if hit is None:
+                        return None
+                    # It may have been added since, or the lookup may correct to
+                    # something already here.
+                    if str(hit.get("foreignArtistId") or "").lower() in own_mb:
+                        return None
+                    if str(hit.get("artistName") or "").strip().lower() in own_nm:
+                        return None
+                    has_art = any(
+                        str(i.get("remoteUrl") or i.get("url") or "").startswith("http")
+                        for i in (hit.get("images") or [])
+                        if i.get("coverType") in ("poster", "fanart")
+                    )
+                    if not has_art:
+                        return None
+                    return {**row, "artist": hit}
+
+                # Enrichment is a Lidarr lookup apiece, so the pool is worked
+                # through a batch at a time and stops as soon as the row is
+                # full — not every candidate is paid for when the first few
+                # already answer.
+                enriched: list[dict] = []
+                for i in range(0, min(len(top), want * 4), want):
+                    batch = top[i:i + want]
+                    enriched += [x for x in await asyncio.gather(*[_enrich(r) for r in batch]) if x]
+                    if len(enriched) >= want:
+                        break
+
+                seen_before = set(cache.get("seen") or [])
+                if seen_before:
+                    enriched.sort(key=lambda r: (r.get("mbid") or r["name"]) in seen_before)
+                store[user or "@server"] = {
+                    "items": enriched,
+                    "at": _time.time(),
+                    # Everything shown so far, so the next rebuild knows what is
+                    # genuinely new rather than merely high-scoring.
+                    "seen": list(seen_before | {(r.get("mbid") or r["name"]) for r in enriched})[-400:],
+                }
+                return web.json_response(enriched[:want])
+
+            if path == "similar" and method == "GET":
+                mbid = request.query.get("mbid", "").strip().lower()
+                name = request.query.get("artist", "").strip()
+                if not mbid and not name:
+                    return web.json_response({"error": "mbid or artist required"}, status=400)
+                params = {
+                    "method": "artist.getsimilar",
+                    "format": "json",
+                    "api_key": api_key,
+                    "limit": request.query.get("limit", "30"),
+                    "autocorrect": "1",
+                }
+                if _MBID_RE.match(mbid):
+                    params["mbid"] = mbid
+                else:
+                    params["artist"] = name
+                try:
+                    async with http.get(
+                        "https://ws.audioscrobbler.com/2.0/",
+                        params=params,
+                        timeout=aiohttp.ClientTimeout(total=15),
+                    ) as r:
+                        d = await r.json(content_type=None)
+                except Exception as e:
+                    _LOGGER.debug("arr_stack lastfm similar failed: %s", e)
+                    return web.json_response({"artists": []})
+                # A key Last.fm rejects answers with an error object, not a list.
+                if not isinstance(d, dict) or "similarartists" not in d:
+                    return web.json_response({"artists": [], "error": (d or {}).get("message")})
+                raw = (d.get("similarartists") or {}).get("artist") or []
+                return web.json_response({"artists": [
+                    {
+                        "name": a.get("name"),
+                        "mbid": a.get("mbid") or None,
+                        # 0-1, so a caller can set a threshold and mean it.
+                        "match": float(a.get("match") or 0),
+                        "url": a.get("url"),
+                    }
+                    for a in raw if a.get("name")
+                ]})
+
+            return web.Response(status=404)
+
+        # ════════════════════════════════════════════
         # Tracearr
         # ════════════════════════════════════════════
         elif service == "tracearr":
@@ -2877,6 +3331,518 @@ class ArrStackProxyView(HomeAssistantView):
         # ════════════════════════════════════════════
         # Prowlarr
         # ════════════════════════════════════════════
+        # ════════════════════════════════════════════
+        # Lidarr — music library
+        # ════════════════════════════════════════════
+        elif service == "lidarr":
+            if not cfg.get(CONF_LIDARR_URL):
+                return web.json_response({"_notConfigured": True})
+            base = cfg.get(CONF_LIDARR_URL, "").rstrip("/")
+            hdrs = {"X-Api-Key": cfg.get(CONF_LIDARR_KEY, "")}
+
+            # An album carries no "added" date, so the order of recently added
+            # music has to come from the import history. Records arrive per
+            # track, several to an album; the card folds them together.
+            if path == "history" and method == "GET":
+                params = {
+                    "page": request.query.get("page", "1"),
+                    "pageSize": request.query.get("pageSize", "200"),
+                    "sortKey": "date",
+                    "sortDirection": "descending",
+                    "eventType": request.query.get("eventType", "3"),
+                }
+                async with http.get(
+                    f"{base}/api/v1/history", params=params, headers=hdrs, ssl=ssl
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            # Never fetch the whole library: this install answers /album with
+            # nearly 40 MB. Albums are pulled by the ids the history named.
+            if path == "albums" and method == "GET":
+                # One artist's discography is small — 36 albums came to 189 kB on
+                # a real library — so the modal reads it whole by artistId.
+                artist_id = request.query.get("artistId")
+                if artist_id:
+                    params = [("artistId", artist_id)]
+                else:
+                    ids = [i for i in (request.query.get("ids") or "").split(",") if i.strip()]
+                    if not ids:
+                        return web.json_response([])
+                    params = [("albumIds", i.strip()) for i in ids[:60]]
+                async with http.get(
+                    f"{base}/api/v1/album", params=params, headers=hdrs, ssl=ssl
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            # Artists are few (hundreds, not thousands) and carry the fanart the
+            # album cards sit on, so this one can be read whole.
+            # One artist in full. The copy embedded in an album carries neither
+            # overview nor statistics, and the bulk list is the largest call of
+            # the three — the detail view asks for just the one it is showing.
+            if path == "artist" and method == "GET":
+                aid = request.query.get("id", "")
+                if not aid.isdigit():
+                    return web.Response(status=400)
+                async with http.get(f"{base}/api/v1/artist/{aid}", headers=hdrs, ssl=ssl) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            # GET lidarr/origins?mbids=a,b,c → each artist's country, from
+            # MusicBrainz. Lidarr's own record carries none. Asked as one search
+            # rather than a call apiece: MusicBrainz allows a request a second
+            # and enforces it, so twenty artists one at a time is twenty seconds.
+            if path == "activity/history" and method == "GET":
+                sort_dir = request.query.get("sortDir", "desc")
+                params = {
+                    "page": request.query.get("page", "1"),
+                    "pageSize": request.query.get("pageSize", "20"),
+                    "sortKey": request.query.get("sortKey", "date"),
+                    "sortDirection": "descending" if sort_dir in ("desc", "descending") else "ascending",
+                    "includeArtist": "true",
+                    "includeAlbum": "true",
+                }
+                event_type = request.query.get("eventType", "")
+                # Lidarr: 1 grabbed, 3 imported, 4 failed, 5 deleted, 6 renamed,
+                # 7 ignored — the card speaks in the names Radarr uses.
+                _event_map = {
+                    "grabbed": 1, "downloadFolderImported": 3, "downloadFailed": 4,
+                    "movieFileDeleted": 5, "episodeFileDeleted": 5,
+                    "movieFileRenamed": 6, "episodeFileRenamed": 6, "downloadIgnored": 7,
+                }
+                if event_type:
+                    params["eventType"] = _event_map.get(event_type, event_type)
+                async with http.get(f"{base}/api/v1/history", headers=hdrs, params=params, ssl=ssl) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path == "activity/blocklist" and method == "GET":
+                async with http.get(
+                    f"{base}/api/v1/blocklist",
+                    headers=hdrs,
+                    params={
+                        "page": request.query.get("page", "1"),
+                        "pageSize": request.query.get("pageSize", "20"),
+                    },
+                    ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path.startswith("activity/blocklist/") and method == "DELETE":
+                bl_id = path.split("/")[-1]
+                if not bl_id.isdigit():
+                    return web.Response(status=400)
+                async with http.delete(f"{base}/api/v1/blocklist/{bl_id}", headers=hdrs, ssl=ssl) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path.startswith("queue/") and method == "DELETE":
+                q_id = path.split("/")[-1]
+                if not q_id.isdigit():
+                    return web.Response(status=400)
+                async with http.delete(
+                    f"{base}/api/v1/queue/{q_id}",
+                    headers=hdrs,
+                    params={
+                        "removeFromClient": request.query.get("removeFromClient", "true"),
+                        "blocklist": request.query.get("blocklist", "false"),
+                        "skipRedownload": request.query.get("skipRedownload", "false"),
+                    },
+                    ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path == "lookup" and method == "GET":
+                term = request.query.get("term", "")
+                if not term:
+                    return web.json_response([])
+                async with http.get(
+                    f"{base}/api/v1/artist/lookup",
+                    params={"term": term},
+                    headers=hdrs,
+                    timeout=aiohttp.ClientTimeout(total=20),
+                    ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path == "mbalbums" and method == "GET":
+                mbid = request.query.get("mbid", "").strip().lower()
+                if not _MBID_RE.match(mbid):
+                    return web.json_response({"error": "mbid required"}, status=400)
+                cache = self._hass.data.setdefault(DOMAIN, {}).setdefault("_mb_albums", {})
+                if mbid in cache:
+                    return web.json_response(cache[mbid])
+                lock = self._hass.data[DOMAIN].setdefault("_mb_lock", asyncio.Lock())
+                async with lock:
+                    if mbid in cache:
+                        return web.json_response(cache[mbid])
+                    out = []
+                    try:
+                        async with http.get(
+                            "https://musicbrainz.org/ws/2/release-group",
+                            params={"artist": mbid, "type": "album", "fmt": "json", "limit": "100"},
+                            headers={
+                                "User-Agent": "arr-stack-card/1.0 (https://github.com/martinargalas/ha-arr-stack-card)",
+                                "Accept": "application/json",
+                            },
+                            timeout=aiohttp.ClientTimeout(total=15),
+                        ) as r:
+                            if r.status == 200:
+                                d = await r.json(content_type=None)
+                                for g in d.get("release-groups") or []:
+                                    if g.get("secondary-types"):
+                                        continue
+                                    out.append({
+                                        "id": g.get("id"),
+                                        "title": g.get("title"),
+                                        "releaseDate": g.get("first-release-date") or "",
+                                    })
+                        out.sort(key=lambda a: a.get("releaseDate") or "", reverse=True)
+                    except Exception:
+                        out = []
+                    cache[mbid] = out
+                    await asyncio.sleep(1.1)
+                return web.json_response(out)
+
+            if path == "addoptions" and method == "GET":
+                async def _get(sub):
+                    try:
+                        async with http.get(f"{base}/api/v1/{sub}", headers=hdrs, ssl=ssl) as r:
+                            return await r.json(content_type=None) if r.status == 200 else []
+                    except Exception:
+                        return []
+                quality, metadata, roots = await asyncio.gather(
+                    _get("qualityprofile"), _get("metadataprofile"), _get("rootfolder"),
+                )
+                return web.json_response({
+                    "quality": [{"id": q.get("id"), "name": q.get("name")} for q in quality or []],
+                    "metadata": [{"id": m.get("id"), "name": m.get("name")} for m in metadata or []],
+                    "rootFolders": [
+                        {"path": f.get("path"), "freeSpace": f.get("freeSpace")} for f in roots or []
+                    ],
+                })
+
+            if path == "artist" and method == "POST":
+                body = await request.json()
+                async with http.post(
+                    f"{base}/api/v1/artist",
+                    json=body,
+                    headers={**hdrs, "Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=60),
+                    ssl=ssl,
+                ) as r:
+                    raw = await r.read()
+                    if r.status < 400:
+                        self._hass.data.setdefault(DOMAIN, {}).pop("_lfm_sug", None)
+                    return _arr_json(raw, r.status)
+
+            if path == "albumlookup" and method == "GET":
+                term = request.query.get("term", "")
+                if not term:
+                    return web.json_response([])
+                async with http.get(
+                    f"{base}/api/v1/album/lookup",
+                    params={"term": term},
+                    headers=hdrs,
+                    timeout=aiohttp.ClientTimeout(total=20),
+                    ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path == "calendar" and method == "GET":
+                params = {
+                    "start": request.query.get("start", ""),
+                    "end": request.query.get("end", ""),
+                    "includeArtist": "true",
+                    "unmonitored": request.query.get("unmonitored", "false"),
+                }
+                async with http.get(
+                    f"{base}/api/v1/calendar", params=params, headers=hdrs, ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path == "origins" and method == "GET":
+                raw = request.query.get("mbids", "")
+                ids = [m for m in (x.strip().lower() for x in raw.split(",")) if _MBID_RE.match(m)]
+                if not ids:
+                    return web.json_response({"error": "mbids required"}, status=400)
+                ids = ids[:20]
+                cache = self._hass.data.setdefault(DOMAIN, {}).setdefault("_mb_origin", {})
+                out = {m: cache[m] for m in ids if m in cache}
+                missing = [m for m in ids if m not in cache]
+                if missing:
+                    lock = self._hass.data[DOMAIN].setdefault("_mb_lock", asyncio.Lock())
+                    async with lock:
+                        missing = [m for m in missing if m not in cache]
+                        for m in ids:
+                            if m in cache:
+                                out[m] = cache[m]
+                        if missing:
+                            query = "arid:(" + " OR ".join(missing) + ")"
+                            found = {}
+                            try:
+                                async with http.get(
+                                    "https://musicbrainz.org/ws/2/artist",
+                                    params={"query": query, "fmt": "json", "limit": "100"},
+                                    headers={
+                                        "User-Agent": "arr-stack-card/1.0 (https://github.com/martinargalas/ha-arr-stack-card)",
+                                        "Accept": "application/json",
+                                    },
+                                    timeout=aiohttp.ClientTimeout(total=15),
+                                ) as r:
+                                    if r.status == 200:
+                                        d = await r.json(content_type=None)
+                                        for a in d.get("artists") or []:
+                                            found[str(a.get("id", "")).lower()] = a.get("country")
+                            except Exception:
+                                found = {}
+                            # Remembered either way: an artist MusicBrainz has no
+                            # country for should not be asked about again.
+                            for m in missing:
+                                cache[m] = found.get(m)
+                                out[m] = cache[m]
+                            await asyncio.sleep(1.1)
+                return web.json_response(out)
+
+            if path == "artists" and method == "GET":
+                async with http.get(f"{base}/api/v1/artist", headers=hdrs, ssl=ssl) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            # Lidarr caches artwork locally and then rewrites the payload's URLs
+            # to container paths, so the browser cannot fetch them and the remote
+            # source is gone from the record. /api/v1/mediacover serves the same
+            # files to an API key, which is what this hands back.
+            if path == "image" and method == "GET":
+                kind = request.query.get("kind", "artist")
+                # Lidarr keeps no downscaled copy of a cover the way it does for
+                # a poster: album art comes back at full size — 59 kB apiece on a
+                # real library, for a tile drawn a couple of hundred pixels wide.
+                # A width asks for it shrunk here instead, cached by path.
+                try:
+                    want_w = int(request.query.get("w", "0") or 0)
+                except ValueError:
+                    want_w = 0
+                want_w = want_w if 32 <= want_w <= 1000 else 0
+                item = request.query.get("id", "")
+                fname = request.query.get("file", "poster.jpg")
+                if kind not in ("artist", "album") or not item.isdigit():
+                    return web.Response(status=400)
+                if "/" in fname or ".." in fname:
+                    return web.Response(status=400)
+                stem = fname.rsplit(".", 1)[0]
+                stems = [stem]
+                base_stem = re.sub(r"-\d+$", "", stem)
+                if base_stem != stem:
+                    stems.append(base_stem)
+                names = []
+                for st in stems:
+                    for ext in (".jpg", ".png", ".jpeg"):
+                        cand = f"{st}{ext}"
+                        if cand not in names:
+                            names.append(cand)
+                if fname in names:
+                    names.remove(fname)
+                names.insert(0, fname)
+                cache = self._hass.data.setdefault(DOMAIN, {}).setdefault("_img_cache", {})
+                ck = f"{kind}/{item}/{fname}@{want_w}"
+                hit = cache.get(ck)
+                if hit is not None:
+                    return web.Response(body=hit[0], content_type=hit[1],
+                                        headers={"Cache-Control": "public, max-age=86400"})
+
+                for name in names:
+                    async with http.get(
+                        f"{base}/api/v1/mediacover/{kind}/{item}/{name}",
+                        headers=hdrs,
+                        timeout=aiohttp.ClientTimeout(total=15),
+                        ssl=ssl,
+                    ) as r:
+                        if r.status != 200:
+                            continue
+                        ct = r.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
+                        raw = await r.read()
+                        if want_w:
+                            raw, ct = await self._hass.async_add_executor_job(
+                                _shrink_image, raw, want_w, ct
+                            )
+                        # A few hundred covers at a dozen kB each is a megabyte or
+                        # two; older entries go once that many have gathered.
+                        if len(cache) > 400:
+                            for k in list(cache)[:200]:
+                                cache.pop(k, None)
+                        cache[ck] = (raw, ct)
+                        return web.Response(body=raw, content_type=ct,
+                                            headers={"Cache-Control": "public, max-age=86400"})
+
+                # Lidarr lists artwork it never wrote to disk — an artist can
+                # report a fanart.jpeg that mediacover answers for under no name
+                # at all. The record still carries where the image came from, so
+                # fetch that rather than handing the card a 404 it can only turn
+                # into a broken image.
+                detail = "artist" if kind == "artist" else "album"
+                cover_type = re.sub(r"-\d+$", "", fname.rsplit(".", 1)[0])
+                try:
+                    async with http.get(
+                        f"{base}/api/v1/{detail}/{item}",
+                        headers=hdrs,
+                        timeout=aiohttp.ClientTimeout(total=15),
+                        ssl=ssl,
+                    ) as r:
+                        rec = await r.json() if r.status == 200 else {}
+                    remote = next(
+                        (
+                            u
+                            for i in (rec.get("images") or [])
+                            if i.get("coverType") == cover_type
+                            for u in (i.get("remoteUrl"), i.get("url"))
+                            if isinstance(u, str) and u.startswith("http")
+                        ),
+                        None,
+                    )
+                    if remote:
+                        async with http.get(
+                            remote, timeout=aiohttp.ClientTimeout(total=20), ssl=ssl
+                        ) as r:
+                            if r.status == 200:
+                                ct = r.headers.get(
+                                    "Content-Type", "image/jpeg"
+                                ).split(";")[0].strip()
+                                raw = await r.read()
+                                if want_w:
+                                    raw, ct = await self._hass.async_add_executor_job(
+                                        _shrink_image, raw, want_w, ct
+                                    )
+                                cache[ck] = (raw, ct)
+                                return web.Response(
+                                    body=raw, content_type=ct,
+                                    headers={"Cache-Control": "public, max-age=86400"},
+                                )
+                except Exception:  # noqa: BLE001 — a missing image is not an error worth raising
+                    pass
+                return web.Response(status=404)
+
+            if path == "queue" and method == "GET":
+                params = {
+                    "page": "1",
+                    "pageSize": request.query.get("pageSize", "100"),
+                    "includeAlbum": "true",
+                    "includeArtist": "true",
+                }
+                async with http.get(
+                    f"{base}/api/v1/queue", params=params, headers=hdrs, ssl=ssl
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            # An album's tracks, for the row that expands the way a season does
+            # into its episodes.
+            if path == "tracks" and method == "GET":
+                aid = request.query.get("albumId", "")
+                if not aid.isdigit():
+                    return web.Response(status=400)
+                async with http.get(
+                    f"{base}/api/v1/track", params={"albumId": aid}, headers=hdrs, ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path == "trackfiles" and method == "GET":
+                aid = request.query.get("albumId", "")
+                if not aid.isdigit():
+                    return web.Response(status=400)
+                async with http.get(
+                    f"{base}/api/v1/trackfile", params={"albumId": aid}, headers=hdrs, ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path == "trackfiles" and method == "DELETE":
+                ids = [i for i in (request.query.get("ids") or "").split(",") if i.strip().isdigit()]
+                if not ids:
+                    return web.Response(status=400)
+                async with http.delete(
+                    f"{base}/api/v1/trackfile/bulk",
+                    json={"trackFileIds": [int(i) for i in ids]},
+                    headers=hdrs, ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            # Interactive Search. Releases are album-scoped in Lidarr — there is
+            # no such thing as a release of an artist — so this mirrors Radarr's
+            # movie search rather than Sonarr's per-episode one.
+            if path == "release" and method == "GET":
+                album_id = request.query.get("albumId", "")
+                if not album_id.isdigit():
+                    return web.Response(status=400)
+                async with http.get(
+                    f"{base}/api/v1/release",
+                    params={"albumId": album_id},
+                    headers=hdrs,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                    ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path == "release" and method == "POST":
+                body = await request.json()
+                async with http.post(
+                    f"{base}/api/v1/release", json=body, headers=hdrs,
+                    timeout=aiohttp.ClientTimeout(total=60), ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            # Commands: ArtistSearch for everything an artist is missing,
+            # AlbumSearch for one record, RefreshArtist to re-read metadata.
+            if path == "command" and method == "POST":
+                body = await request.json()
+                async with http.post(
+                    f"{base}/api/v1/command", json=body, headers=hdrs, ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path.startswith("command/") and method == "GET":
+                cmd_id = path.split("/", 1)[1]
+                if not cmd_id.isdigit():
+                    return web.Response(status=400)
+                async with http.get(f"{base}/api/v1/command/{cmd_id}", headers=hdrs, ssl=ssl) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path.startswith("artist/") and method in ("PUT", "DELETE"):
+                aid = path.split("/", 1)[1]
+                if not aid.isdigit():
+                    return web.Response(status=400)
+                url = f"{base}/api/v1/artist/{aid}"
+                if method == "DELETE":
+                    params = {
+                        "deleteFiles": request.query.get("deleteFiles", "false"),
+                        "addImportListExclusion": request.query.get("addImportListExclusion", "false"),
+                    }
+                    async with http.delete(url, params=params, headers=hdrs, ssl=ssl) as r:
+                        return _arr_json(await r.read(), r.status)
+                body = await request.json()
+                async with http.put(url, json=body, headers=hdrs, ssl=ssl) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            # Monitoring a whole discography one PUT at a time means a full
+            # album record per call; Lidarr takes the ids in one go instead.
+            if path == "albums/monitor" and method == "PUT":
+                body = await request.json()
+                ids = [int(i) for i in (body.get("albumIds") or []) if str(i).isdigit()]
+                if not ids:
+                    return web.json_response([])
+                async with http.put(
+                    f"{base}/api/v1/album/monitor",
+                    json={"albumIds": ids, "monitored": bool(body.get("monitored"))},
+                    headers=hdrs,
+                    ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path.startswith("album/") and method == "PUT":
+                bid = path.split("/", 1)[1]
+                if not bid.isdigit():
+                    return web.Response(status=400)
+                body = await request.json()
+                async with http.put(
+                    f"{base}/api/v1/album/{bid}", json=body, headers=hdrs, ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            return web.json_response({"error": "unknown lidarr path"}, status=404)
+
         elif service == "prowlarr":
             if not cfg.get(CONF_PROWLARR_URL):
                 return web.json_response({"_notConfigured": True})
@@ -3078,6 +4044,54 @@ class ArrStackProxyView(HomeAssistantView):
                                         api_token = servers[0].get("AccessToken", "")
                         except Exception:
                             pass
+                # GET jellyfin/artist?name=X → the artist's Jellyfin id. Music
+                # has no tmdb or tvdb id to match on, so the name is what there
+                # is; MusicBrainz ids are checked first where Jellyfin has them.
+                if path == "artist" and method == "GET":
+                    name = request.rel_url.query.get("name", "").strip()
+                    mbid = request.rel_url.query.get("mbid", "").strip()
+                    if not server_url or not api_token:
+                        return web.json_response({"error": "jellyfin_unavailable"}, status=503)
+                    if not name and not mbid:
+                        return web.json_response({"error": "name required"}, status=400)
+                    hdrs = {"X-Emby-Token": api_token, "Accept": "application/json"}
+                    params = {
+                        "recursive": "true",
+                        "includeItemTypes": "MusicArtist",
+                        "fields": "ProviderIds",
+                        "limit": "20",
+                    }
+                    if name:
+                        params["searchTerm"] = name
+                    try:
+                        async with http.get(
+                            f"{server_url}/Items",
+                            headers=hdrs,
+                            params=params,
+                            timeout=aiohttp.ClientTimeout(total=10),
+                            ssl=ssl,
+                        ) as r:
+                            items = ((await r.json(content_type=None)) or {}).get("Items") or []
+                    except Exception:
+                        items = []
+                    hit = None
+                    if mbid:
+                        for it in items:
+                            pids = {k.lower(): str(v) for k, v in (it.get("ProviderIds") or {}).items()}
+                            if pids.get("musicbrainzartist", "").lower() == mbid.lower():
+                                hit = it
+                                break
+                    if hit is None and name:
+                        hit = next(
+                            (i for i in items if (i.get("Name") or "").lower() == name.lower()),
+                            None,
+                        )
+                    if hit is None:
+                        return web.json_response({})
+                    return web.json_response({
+                        "id": hit.get("Id"), "name": hit.get("Name"), "type": hit.get("Type"),
+                    })
+
                 # GET jellyfin/lookup?tmdbId=X | tvdbId=X → the item's Jellyfin id.
                 # Jellystat keys everything on it, and it is the only identifier
                 # that survives a localised library.

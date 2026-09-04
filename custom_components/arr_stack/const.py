@@ -80,6 +80,11 @@ PLEX_CLIENT_ID  = "arr-stack-card"
 CONF_PROWLARR_URL = "prowlarr_url"
 CONF_PROWLARR_KEY = "prowlarr_api_key"
 
+CONF_LIDARR_URL = "lidarr_url"
+CONF_LIDARR_KEY = "lidarr_api_key"
+CONF_LASTFM_KEY = "lastfm_api_key"
+CONF_LASTFM_USER = "lastfm_user"
+
 CONF_MAINTAINERR_URL = "maintainerr_url"
 
 CONF_SKIP_SSL_VERIFY = "skip_ssl_verify"

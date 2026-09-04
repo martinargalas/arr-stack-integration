@@ -38,6 +38,7 @@ from .const import (
     CONF_TRAKT_ACCESS_TOKEN, CONF_TRAKT_REFRESH_TOKEN, CONF_TRAKT_EXPIRES_AT,
     TRAKT_API_BASE,
     CONF_PROWLARR_URL, CONF_PROWLARR_KEY,
+    CONF_LIDARR_URL, CONF_LIDARR_KEY, CONF_LASTFM_KEY, CONF_LASTFM_USER,
     CONF_MAINTAINERR_URL,
     CONF_SKIP_SSL_VERIFY,
     CONF_DEBUG_LOGGING,
@@ -612,7 +613,7 @@ def _svc_err(service: str, code: str) -> str:
 # ── Config Flow ──────────────────────────────────────────────────────────────
 
 # All configurable step groups in order
-_ALL_STEPS = ['media', 'torrents', 'usenet', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr', 'maintainerr']
+_ALL_STEPS = ['media', 'lidarr', 'torrents', 'usenet', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr', 'maintainerr']
 
 # Field layout per step: {step: {section: [field, ...]}}
 _TORRENT_GROUPS = {
@@ -649,10 +650,12 @@ _JELLYFIN_GROUPS = {
 }
 _BAZARR_GROUPS      = {"bazarr":      [CONF_BAZARR_URL, CONF_BAZARR_KEY]}
 _PROWLARR_GROUPS    = {"prowlarr":    [CONF_PROWLARR_URL, CONF_PROWLARR_KEY]}
+_LIDARR_GROUPS      = {"lidarr":      [CONF_LIDARR_URL, CONF_LIDARR_KEY]}
 _MAINTAINERR_GROUPS = {"maintainerr": [CONF_MAINTAINERR_URL]}
 _TRAKT_GROUPS = {
     "trakt":      [CONF_TRAKT_CLIENT_ID, CONF_TRAKT_CLIENT_SECRET],
     "suggestarr": [CONF_SUGGESTARR_URL, CONF_SUGGESTARR_USER, CONF_SUGGESTARR_PASS],
+    "lastfm":     [CONF_LASTFM_KEY, CONF_LASTFM_USER],
 }
 
 
@@ -709,7 +712,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_service_selection(self, user_input=None):
         if user_input is not None:
             # media is always included — mandatory
-            optional_steps = ['torrents', 'usenet', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr', 'maintainerr']
+            optional_steps = ['lidarr', 'torrents', 'usenet', 'quality', 'bazarr', 'discovery', 'plex', 'jellyfin', 'trakt', 'prowlarr', 'maintainerr']
             selected = ['media'] + [s for s in optional_steps if user_input.get(f'enable_{s}', False)]
             # preserve order from _ALL_STEPS
             self._step_queue = [s for s in _ALL_STEPS if s in selected]
@@ -721,6 +724,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Derive defaults from existing data
         d = self._data
         schema = vol.Schema({
+            vol.Optional('enable_lidarr',    default=bool(d.get(CONF_LIDARR_URL))): bool,
             vol.Optional('enable_torrents',  default=bool(d.get(CONF_QBIT_URL) or d.get(CONF_DELUGE_URL) or d.get(CONF_RTORRENT_URL))): bool,
             vol.Optional('enable_usenet',    default=bool(d.get(CONF_SAB_URL) or d.get(CONF_NZBGET_URL))): bool,
             vol.Optional('enable_quality',   default=bool(d.get(CONF_RADARR2_URL) or d.get(CONF_SONARR2_URL))): bool,
@@ -1233,6 +1237,8 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._data[CONF_SUGGESTARR_URL]  = sa_url
                 self._data[CONF_SUGGESTARR_USER] = sa_user
                 self._data[CONF_SUGGESTARR_PASS] = sa_pass
+                self._data[CONF_LASTFM_KEY]  = (user_input.get(CONF_LASTFM_KEY) or "").strip()
+                self._data[CONF_LASTFM_USER] = (user_input.get(CONF_LASTFM_USER) or "").strip()
 
             if errors:
                 pass
@@ -1387,6 +1393,55 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         return self.async_show_form(
             step_id="prowlarr",
+            data_schema=schema,
+            errors=errors,
+            last_step=len(self._step_queue) == 0,
+        )
+
+    # ── Lidarr ───────────────────────────────────────────────────────────────
+
+    async def async_step_lidarr(self, user_input=None):
+        errors = {}
+        user_input = _flat(user_input)
+        if user_input is not None:
+            url = (user_input.get(CONF_LIDARR_URL) or "").strip().rstrip("/")
+            key = (user_input.get(CONF_LIDARR_KEY) or "").strip()
+            if url:
+                err = _url_error(url)
+                if err:
+                    errors["base"] = _svc_err("lidarr", err)
+                else:
+                    try:
+                        session = async_get_clientsession(self.hass)
+                        ssl = False if self._data.get(CONF_SKIP_SSL_VERIFY) else None
+                        # system/status is the cheapest call that still proves the
+                        # key is right — the album list runs to tens of megabytes.
+                        async with session.get(
+                            f"{url}/api/v1/system/status",
+                            headers={"X-Api-Key": key},
+                            timeout=aiohttp.ClientTimeout(total=10),
+                            ssl=ssl,
+                        ) as r:
+                            if r.status not in (200, 201):
+                                errors["base"] = "lidarr_cannot_connect"
+                    except Exception as e:
+                        errors["base"] = _svc_err("lidarr", _log_exc("lidarr", url, e))
+            if not errors:
+                self._data[CONF_LIDARR_URL] = url or ""
+                self._data[CONF_LIDARR_KEY] = key
+                return await self._next_step()
+
+        d = self._data
+        ui = user_input or {}
+        schema = self.add_suggested_values_to_schema(
+            _sections(_LIDARR_GROUPS),
+            _nest(_LIDARR_GROUPS, {
+                CONF_LIDARR_URL: ui.get(CONF_LIDARR_URL) or d.get(CONF_LIDARR_URL, ""),
+                CONF_LIDARR_KEY: ui.get(CONF_LIDARR_KEY) or d.get(CONF_LIDARR_KEY, ""),
+            }),
+        )
+        return self.async_show_form(
+            step_id="lidarr",
             data_schema=schema,
             errors=errors,
             last_step=len(self._step_queue) == 0,
