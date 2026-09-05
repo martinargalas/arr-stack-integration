@@ -339,7 +339,7 @@ The music side of the row: artists you do not own yet, suggested from what you a
 | Field | Notes |
 |-------|-------|
 | Last.fm API key | Free, from [last.fm/api/account/create](https://www.last.fm/api/account/create). Only the key is needed — the shared secret is for scrobbling, which this never does |
-| Last.fm username | Optional. With it, suggestions are seeded from your own scrobbles — Plexamp, Spotify, anything that scrobbles. Without it, they come from what has been played on your own server |
+| Last.fm username | Optional. With it, suggestions follow your scrobbles wherever they come from — Plexamp, Spotify, Apple Music, YouTube Music, your phone or your car; anything that scrobbles to Last.fm counts, not just your own server. Without it, they come from what has been played on your own server |
 
 In the card, **Like** tells Last.fm to find more in that direction and **Skip** retires an artist for good. Both are remembered per Home Assistant user, so two people sharing an instance do not steer each other's suggestions.
 
