@@ -14,7 +14,7 @@ A Home Assistant custom integration that acts as a secure server-side proxy betw
 
 ### Supported services
 
-<p><img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/radarr.png" height="36" title="Radarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sonarr.png" height="36" title="Sonarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/bazarr.png" height="36" title="Bazarr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/qbittorrent.png" height="36" title="qBittorrent"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/deluge.png" height="36" title="Deluge"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/rutorrent.png" height="36" title="rTorrent"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sabnzbd.png" height="36" title="SABnzbd"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/nzbget.png" height="36" title="NZBGet"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/overseerr.png" height="36" title="Overseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyseerr.png" height="36" title="Jellyseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tmdb.png" height="36" title="TMDB"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/prowlarr.png" height="36" title="Prowlarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/maintainerr.png" height="36" title="Maintainerr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/plex.png" height="36" title="Plex"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyfin.png" height="36" title="Jellyfin"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/emby.png" height="36" title="Emby"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/kodi.png" height="36" title="Kodi"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tautulli.png" height="36" title="Tautulli"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellystat.png" height="36" title="Jellystat"/> <img src="https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/tracearr.svg" height="36" title="Tracearr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/trakt.png" height="36" title="Trakt"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/suggest-arr.png" height="36" title="SuggestArr"/></p>
+<p><img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/radarr.png" height="36" title="Radarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sonarr.png" height="36" title="Sonarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/lidarr.png" height="36" title="Lidarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/bazarr.png" height="36" title="Bazarr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/qbittorrent.png" height="36" title="qBittorrent"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/deluge.png" height="36" title="Deluge"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/rutorrent.png" height="36" title="rTorrent"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sabnzbd.png" height="36" title="SABnzbd"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/nzbget.png" height="36" title="NZBGet"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/overseerr.png" height="36" title="Overseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyseerr.png" height="36" title="Jellyseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tmdb.png" height="36" title="TMDB"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/prowlarr.png" height="36" title="Prowlarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/maintainerr.png" height="36" title="Maintainerr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/plex.png" height="36" title="Plex"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyfin.png" height="36" title="Jellyfin"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/emby.png" height="36" title="Emby"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/kodi.png" height="36" title="Kodi"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tautulli.png" height="36" title="Tautulli"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellystat.png" height="36" title="Jellystat"/> <img src="https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/tracearr.svg" height="36" title="Tracearr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/trakt.png" height="36" title="Trakt"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/suggest-arr.png" height="36" title="SuggestArr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/lastfm.png" height="36" title="Last.fm"/></p>
 
 ## Why is this needed?
 
@@ -28,6 +28,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 |---------|------|----------|
 | Radarr | Movie library management | ✅ Yes |
 | Sonarr | TV show library management | ✅ Yes |
+| Lidarr | Music library management | Optional |
 | Radarr 2 | Second Radarr instance (e.g. 4K) | Optional |
 | Sonarr 2 | Second Sonarr instance (e.g. 4K) | Optional |
 | qBittorrent | Torrent download client | Optional |
@@ -45,8 +46,9 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | Jellystat | Watch history and statistics | Optional |
 | Tracearr *(beta)* | Watch history, statistics, and usage analytics | Optional |
 | Prowlarr | Indexer management and search statistics | Optional |
-| Trakt | Personalised recommendations — needs a paid VIP account | Optional |
-| SuggestArr | Free recommendations from what you have watched | Optional |
+| Trakt | Film and show recommendations — needs a paid VIP account | Optional |
+| SuggestArr | Free film and show recommendations from what you have watched | Optional |
+| Last.fm | Music recommendations — free API key, works with Lidarr | Optional |
 | Maintainerr | Automatic library cleanup, with countdowns shown across the card | Optional |
 | Gluetun | VPN status in the downloads panel | Optional |
 
@@ -92,6 +94,7 @@ Choose which optional services you want to configure. Only the selected steps wi
 
 | Toggle | Services configured |
 |--------|-------------------|
+| Lidarr | Lidarr |
 | Torrent clients | qBittorrent, Deluge, rTorrent |
 | Usenet clients | SABnzbd, NZBGet |
 | 2nd instances | Radarr 2, Sonarr 2 |
@@ -100,7 +103,7 @@ Choose which optional services you want to configure. Only the selected steps wi
 | Plex / Emby | Plex, Emby |
 | Streaming stats | Tautulli, Jellystat, Tracearr |
 | Prowlarr | Prowlarr |
-| Recommendations | Trakt, SuggestArr |
+| Recommendations | Trakt, SuggestArr, Last.fm |
 | Maintainerr | Maintainerr |
 | Gluetun | Gluetun |
 
@@ -114,6 +117,19 @@ Choose which optional services you want to configure. Only the selected steps wi
 | Radarr API key | Find in Radarr → Settings → General |
 | Sonarr URL | `http://192.168.1.10:8989` |
 | Sonarr API key | Find in Sonarr → Settings → General |
+
+---
+
+### Lidarr *(optional)*
+
+Your music library. Fill it in and the card gains artists, albums and everything that goes with them — the library, the calendar, the download queue, search, and the artist detail with its own interactive search. Leave it empty and the card carries no music at all.
+
+| Field | Example |
+|-------|---------|
+| Lidarr URL | `http://192.168.1.10:8686` |
+| Lidarr API key | Find in Lidarr → Settings → General |
+
+Music recommendations are set up later, in the Recommendations step — they need Lidarr as well as a Last.fm key.
 
 ---
 
@@ -288,9 +304,9 @@ Gluetun's control server must be reachable from Home Assistant:
 
 ---
 
-### Recommendations — Trakt + SuggestArr *(optional)*
+### Recommendations — Trakt + SuggestArr + Last.fm *(optional)*
 
-Two independent sources of "what should I watch next". Each gets its own category in the card and you can use either, both, or neither.
+Three sources for one **Recommendations** row in the card. Use any of them, or none — the card's own settings are where you choose which ones it draws on, and its posters wear the mark of whichever service suggested them.
 
 #### SuggestArr
 
@@ -308,13 +324,24 @@ SuggestArr refills its pool on its own schedule, so once you have worked through
 
 #### Trakt
 
-Personalised recommendations from your Trakt watch history. **Trakt now requires a paid VIP account** for this — without one the API returns nothing and the category stays empty.
+Film and show recommendations from your Trakt watch history. **Trakt now requires a paid VIP account** for this — without one the API returns nothing and Trakt simply contributes nothing to the row.
 
 > **Scrobbling required for personalised results.** Recommendations are based on your watch history — titles you've already seen are filtered out and the suggestions are tailored to your taste. For this to work, your plays need to be synced to Trakt automatically. If you use Plex, [PlexTraktSync](https://github.com/Taxel/PlexTraktSync) is a good option — run it as a Docker container in `watch` mode and it will mark titles as watched on Trakt in real time as you finish them.
 
 1. Go to [trakt.tv/oauth/applications/new](https://trakt.tv/oauth/applications/new) and create a new application (redirect URI: `urn:ietf:wg:oauth:2.0:oob`)
 2. Copy the **Client ID** and **Client Secret** into the setup step
 3. Visit the shown URL on trakt.tv, enter the code, then click Submit
+
+#### Last.fm
+
+The music side of the row: artists you do not own yet, suggested from what you actually listen to. **Lidarr is required** — without a library to compare against, there is nothing to suggest and nowhere to add an artist.
+
+| Field | Notes |
+|-------|-------|
+| Last.fm API key | Free, from [last.fm/api/account/create](https://www.last.fm/api/account/create). Only the key is needed — the shared secret is for scrobbling, which this never does |
+| Last.fm username | Optional. With it, suggestions are seeded from your own scrobbles — Plexamp, Spotify, anything that scrobbles. Without it, they come from what has been played on your own server |
+
+In the card, **Like** tells Last.fm to find more in that direction and **Skip** retires an artist for good. Both are remembered per Home Assistant user, so two people sharing an instance do not steer each other's suggestions.
 
 ---
 
