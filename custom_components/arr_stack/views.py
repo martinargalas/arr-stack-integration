@@ -2719,6 +2719,19 @@ class ArrStackProxyView(HomeAssistantView):
                 ) as r:
                     return web.json_response(_tmdb_page(await r.json()))
 
+            def _tmdb_certs(d):
+                """Flatten TMDB's per-country age ratings to [{country, rating}]."""
+                out = []
+                for r in ((d.get("release_dates") or {}).get("results") or []):
+                    rating = next((x.get("certification") for x in (r.get("release_dates") or [])
+                                   if x.get("certification")), "")
+                    if rating:
+                        out.append({"country": r.get("iso_3166_1", ""), "rating": rating})
+                for r in ((d.get("content_ratings") or {}).get("results") or []):
+                    if r.get("rating"):
+                        out.append({"country": r.get("iso_3166_1", ""), "rating": r["rating"]})
+                return out
+
             def _tmdb_cast(d):
                 cast = (d.get("credits") or {}).get("cast") or []
                 return {"cast": [{
@@ -2729,7 +2742,7 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path.startswith("movie/") and method == "GET":
                 movie_id = path[6:]
-                async with http.get(f"{_TMDB_BASE}/movie/{movie_id}", params={**base_params, "append_to_response": "credits"}, timeout=timeout) as r:
+                async with http.get(f"{_TMDB_BASE}/movie/{movie_id}", params={**base_params, "append_to_response": "credits,release_dates"}, timeout=timeout) as r:
                     d = await r.json()
                 async with http.get(f"{_TMDB_BASE}/movie/{movie_id}/videos", params=base_params, timeout=timeout) as r:
                     v = await r.json()
@@ -2745,12 +2758,13 @@ class ArrStackProxyView(HomeAssistantView):
                     "voteAverage":     d.get("vote_average", 0),
                     "genres":          [{"name": g["name"]} for g in d.get("genres", [])],
                     "credits":         _tmdb_cast(d),
+                    "certifications":  _tmdb_certs(d),
                     "youTubeTrailerId": trailer["key"] if trailer else None,
                 })
 
             if path.startswith("tv/") and method == "GET":
                 tv_id = path[3:]
-                async with http.get(f"{_TMDB_BASE}/tv/{tv_id}", params={**base_params, "append_to_response": "credits"}, timeout=timeout) as r:
+                async with http.get(f"{_TMDB_BASE}/tv/{tv_id}", params={**base_params, "append_to_response": "credits,content_ratings"}, timeout=timeout) as r:
                     d = await r.json()
                 async with http.get(f"{_TMDB_BASE}/tv/{tv_id}/videos", params=base_params, timeout=timeout) as r:
                     v = await r.json()
@@ -2767,6 +2781,7 @@ class ArrStackProxyView(HomeAssistantView):
                     "genres":          [{"name": g["name"]} for g in d.get("genres", [])],
                     "numberOfSeasons": d.get("number_of_seasons", 0),
                     "credits":         _tmdb_cast(d),
+                    "certifications":  _tmdb_certs(d),
                     "youTubeTrailerId": trailer["key"] if trailer else None,
                 })
 
@@ -2918,10 +2933,10 @@ class ArrStackProxyView(HomeAssistantView):
                 want = max(4, min(40, int(request.query.get("limit", "20") or 20)))
                 user = cfg.get(CONF_LASTFM_USER, "").strip()
                 store = self._hass.data.setdefault(DOMAIN, {}).setdefault("_lfm_sug", {})
-                cache = store.get(user or "@server") or {}
-                fresh = cache.get("at", 0) + 6 * 3600 > _time.time()
-                if fresh and cache.get("items") and not request.query.get("refresh"):
-                    return web.json_response(cache["items"][:want])
+                key = user or "@server"
+                cache = store.get(key) or {}
+                now = _time.time()
+                sug_ttl = 2 * 3600
                 li_url = cfg.get(CONF_LIDARR_URL, "").rstrip("/")
                 li_key = cfg.get(CONF_LIDARR_KEY, "")
                 if not li_url or not li_key:
@@ -2938,6 +2953,51 @@ class ArrStackProxyView(HomeAssistantView):
                             return await r.json(content_type=None)
                     except Exception:
                         return {}
+
+                async def _recent_seeds():
+                    """Artists from the last 200 scrobbles, the newest counting most.
+
+                    A play loses half its weight every three days, so what is on
+                    this week outranks what filled the last three months. Any
+                    client that scrobbles counts — the card does not have to
+                    have seen the play itself.
+                    """
+                    d = await _lfm({"method": "user.getrecenttracks", "user": user, "limit": "200"})
+                    tracks = ((d or {}).get("recenttracks") or {}).get("track") or []
+                    if isinstance(tracks, dict):
+                        tracks = [tracks]
+                    weight: dict[str, float] = {}
+                    names: dict[str, tuple[str, str]] = {}
+                    for t in tracks:
+                        art = t.get("artist") or {}
+                        name = (art.get("#text") or art.get("name") or "").strip()
+                        if not name:
+                            continue
+                        try:
+                            ts = int((t.get("date") or {}).get("uts") or now)
+                        except (TypeError, ValueError):
+                            ts = now
+                        k = name.lower()
+                        weight[k] = weight.get(k, 0.0) + 0.5 ** (max(0, now - ts) / 86400 / 3)
+                        names.setdefault(k, (name, art.get("mbid") or ""))
+                    ranked = sorted(weight.items(), key=lambda kv: -kv[1])
+                    return [(names[k][0], names[k][1], w) for k, w in ranked]
+
+                def _sig(rows):
+                    return sorted({n.lower() for n, _, _ in (rows or [])[:4]})
+
+                # What is playing now decides when the row is rebuilt, not only
+                # the clock: every ten minutes the recent plays are read again,
+                # and a different set of artists at the top means new seeds.
+                recent = None
+                changed = False
+                if user and cache.get("items") and now - cache.get("checked", 0) > 600:
+                    recent = await _recent_seeds()
+                    changed = bool(recent) and _sig(recent) != cache.get("sig")
+                    cache["checked"] = now
+                fresh = cache.get("at", 0) + sug_ttl > now
+                if fresh and cache.get("items") and not changed and not request.query.get("refresh"):
+                    return web.json_response(cache["items"][:want])
 
                 # Who is already here, and what they are worth as a seed.
                 try:
@@ -2960,13 +3020,32 @@ class ArrStackProxyView(HomeAssistantView):
 
                 seeds = []
                 if user:
+                    if recent is None:
+                        recent = await _recent_seeds()
                     d = await _lfm({
                         "method": "user.gettopartists", "user": user,
                         "period": request.query.get("period", "3month"), "limit": "12",
                     })
-                    for a in ((d or {}).get("topartists") or {}).get("artist") or []:
-                        if a.get("name"):
-                            seeds.append((a["name"], a.get("mbid") or "", int(a.get("playcount") or 1)))
+                    top_rows = [
+                        (a["name"], a.get("mbid") or "", int(a.get("playcount") or 1))
+                        for a in ((d or {}).get("topartists") or {}).get("artist") or []
+                        if a.get("name")
+                    ]
+                    # Up to five seeds from what is playing now, then the last
+                    # three months fill in. The recent weights are scaled so the
+                    # artist on repeat this week counts as much as the most
+                    # played of the quarter — raw, a few days of plays would
+                    # never outweigh months of them.
+                    top_max = max((p for _, _, p in top_rows), default=1)
+                    rec_max = max((w for _, _, w in recent or []), default=1) or 1
+                    taken = set()
+                    for name, mb, w in (recent or [])[:5]:
+                        seeds.append((name, mb, max(1, round(w / rec_max * top_max))))
+                        taken.add(name.lower())
+                    for name, mb, p in top_rows:
+                        if name.lower() not in taken:
+                            seeds.append((name, mb, p))
+                            taken.add(name.lower())
                 if not seeds:
                     played: dict[str, int] = {}
 
@@ -3067,7 +3146,7 @@ class ArrStackProxyView(HomeAssistantView):
                         hit = by_mb.get(mb)
                         picked.append((hit.get("artistName") if hit else "", mb, 3))
                     seeds = [p for p in picked if p[1]] + seeds
-                seeds = seeds[:8]
+                seeds = seeds[:10]
                 if not seeds:
                     return web.json_response([])
 
@@ -3108,11 +3187,20 @@ class ArrStackProxyView(HomeAssistantView):
                         if float(a.get("match") or 0) * weight >= row["score"] / 2:
                             row["seed"] = name
 
-                # Best three of each seed first, then the rest by score: the row
-                # stays varied while there is variety to be had, and still fills
-                # up when most of what came back is already in the library.
+                # The seeds take turns — the best of each, then the second best of
+                # each, and so on, in seed order (likes, then what is playing
+                # now, then the quarter). Sorted by score alone, one seed whose
+                # neighbours were not yet in the library filled the row, and
+                # what was actually on repeat got a single name in.
                 ranked = sorted(scored.values(), key=lambda r: -r["score"])
-                top = [r for r in ranked if r["rank"] < 3] + [r for r in ranked if r["rank"] >= 3]
+                by_seed: dict[str, list] = {}
+                for r in ranked:
+                    by_seed.setdefault(r["seed"], []).append(r)
+                order = list(dict.fromkeys(s[0] for s in seeds if s[0] in by_seed))
+                order += [k for k in by_seed if k not in order]
+                top = []
+                for i in range(max((len(v) for v in by_seed.values()), default=0)):
+                    top += [by_seed[k][i] for k in order if i < len(by_seed[k])]
 
                 # Lidarr's own lookup carries the artwork, the rating and the
                 # overview — the same record the card draws everywhere else.
@@ -3167,9 +3255,18 @@ class ArrStackProxyView(HomeAssistantView):
                 seen_before = set(cache.get("seen") or [])
                 if seen_before:
                     enriched.sort(key=lambda r: (r.get("mbid") or r["name"]) in seen_before)
-                store[user or "@server"] = {
+                _LOGGER.debug(
+                    "arr_stack lastfm: %d seeds (%d from recent plays), %d candidates, %d suggestions",
+                    len(seeds), min(5, len(recent or [])), len(top), len(enriched),
+                )
+                # A thin answer is kept for minutes rather than hours, so a
+                # rebuild that came up short does not stick for the whole window.
+                thin = len(enriched) < want // 2
+                store[key] = {
                     "items": enriched,
-                    "at": _time.time(),
+                    "at": now - (sug_ttl - 600) if thin else now,
+                    "checked": now,
+                    "sig": _sig(recent),
                     # Everything shown so far, so the next rebuild knows what is
                     # genuinely new rather than merely high-scoring.
                     "seen": list(seen_before | {(r.get("mbid") or r["name"]) for r in enriched})[-400:],
