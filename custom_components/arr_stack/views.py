@@ -30,6 +30,177 @@ def _arr_json(raw: bytes, status: int) -> web.Response:
     return web.Response(body=raw, content_type="application/json", status=status)
 
 
+# ── Deezer stand-in artwork ────────────────────────────────────────────────
+# Lidarr takes artwork from fanart.tv and TheAudioDB, which barely cover Russian
+# music: measured on a real library, 43 of 302 artists had no picture at all.
+# Deezer has nearly every one of them. Only where Deezer keeps the image is
+# resolved here - through the Deezer link MusicBrainz records for the artist,
+# or a matching album when there is none - and remembered; the browser then
+# loads the image straight from Deezer's CDN at the size it draws. Nothing is
+# stored in Home Assistant: the answers live in memory here and in the browser.
+_DZ_ARTIST_RE = re.compile(r"deezer\.com/(?:[a-z]{2}/)?artist/(\d+)")
+_DZ_IMAGE_RE = re.compile(r"/images/(?:artist|cover)/([0-9a-f]{32})/")
+_MB_UA = "arr-stack-card ( https://github.com/martinargalas/ha-arr-stack-card )"
+
+
+class _AltartRetry(Exception):
+    """A source asked to slow down; the artist stays queued, nothing is stored."""
+
+
+def _norm_title(s) -> str:
+    """Letters and digits only, lower case - how titles and names are compared."""
+    return "".join(ch for ch in str(s or "").lower() if ch.isalnum())
+
+
+def _dz_hash(url) -> str | None:
+    """The image id inside a Deezer CDN address; None for Deezer's blank picture."""
+    m = _DZ_IMAGE_RE.search(url or "")
+    return m.group(1) if m else None
+
+
+def _mb_deezer_id(mb: dict | None) -> str | None:
+    """The Deezer artist id a MusicBrainz artist record links to, if any."""
+    for rel in (mb or {}).get("relations") or []:
+        m = _DZ_ARTIST_RE.search(((rel.get("url") or {}).get("resource")) or "")
+        if m:
+            return m.group(1)
+    return None
+
+
+async def _altart_resolve(http, mbid: str, name: str, titles: list, dom: dict) -> dict | None:
+    """Where Deezer keeps an artist's picture and album covers, or None."""
+
+    async def dz(path: str, **params) -> dict:
+        try:
+            async with http.get(
+                f"https://api.deezer.com/{path}", params=params,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                d = await r.json(content_type=None)
+        except Exception as e:  # noqa: BLE001
+            raise _AltartRetry() from e
+        if isinstance(d, dict) and d.get("error"):
+            # Code 4 is Deezer's quota; anything else is a plain miss.
+            if (d["error"] or {}).get("code") == 4:
+                raise _AltartRetry()
+            return {}
+        return d if isinstance(d, dict) else {}
+
+    async def by_name(nm: str, known: set) -> str | None:
+        """The Deezer artist of this name that shares an album with `known`."""
+        if not nm or not known:
+            return None
+        hits = (await dz("search/artist", q=nm, limit=5)).get("data") or []
+        exact = sorted(
+            (h for h in hits if _norm_title(h.get("name")) == _norm_title(nm)),
+            key=lambda h: -(h.get("nb_fan") or 0),
+        )
+        for h in exact[:2]:
+            albs = (await dz(f"artist/{h['id']}/albums", limit=200)).get("data") or []
+            if known & {_norm_title(x.get("title")) for x in albs}:
+                return str(h["id"])
+        return None
+
+    want = {_norm_title(t) for t in titles if t}
+    # Deezer first: it takes fifty requests in five seconds where MusicBrainz
+    # takes one a second, so most artists are settled here in a moment. The
+    # same name counts only with an album the two share, so a common name never
+    # lends an artist a stranger's face.
+    dz_id = await by_name(name, want)
+    # Otherwise the Deezer link MusicBrainz records for the artist - exact, but
+    # at MusicBrainz's pace of one request a second.
+    if not dz_id:
+        gate = dom.setdefault("_mb_gate", {"lock": asyncio.Lock(), "last": 0.0})
+        async with gate["lock"]:
+            wait = gate["last"] + 1.1 - _time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                async with http.get(
+                    f"https://musicbrainz.org/ws/2/artist/{mbid}",
+                    params={"inc": "url-rels+release-groups", "fmt": "json"},
+                    headers={"User-Agent": _MB_UA, "Accept": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=20),
+                ) as r:
+                    gate["last"] = _time.monotonic()
+                    if r.status in (429, 503):
+                        raise _AltartRetry()
+                    mb = await r.json(content_type=None) if r.status == 200 else {}
+            except _AltartRetry:
+                raise
+            except Exception as e:  # noqa: BLE001 - network trouble: try again later
+                raise _AltartRetry() from e
+        dz_id = _mb_deezer_id(mb)
+        if not dz_id and not want:
+            # An artist outside the library - a search result - has no Lidarr
+            # albums to compare. MusicBrainz's own list of its releases, which
+            # came back with the same request, stands in for them.
+            mb_titles = {_norm_title(rg.get("title")) for rg in (mb or {}).get("release-groups") or []} - {""}
+            dz_id = await by_name(name or (mb or {}).get("name") or "", mb_titles)
+    if not dz_id:
+        return None
+    art = await dz(f"artist/{dz_id}")
+    albs = (await dz(f"artist/{dz_id}/albums", limit=200)).get("data") or [] if want else []
+    covers: dict[str, str] = {}
+    for x in albs:
+        k = _norm_title(x.get("title"))
+        h = _dz_hash(x.get("cover_xl") or x.get("cover_big") or "")
+        if k in want and h and k not in covers:
+            covers[k] = h
+    pic = _dz_hash(art.get("picture_xl") or art.get("picture_big") or "")
+    if not pic and not covers:
+        return None
+    return {"p": pic, "a": covers}
+
+
+async def _altart_worker(hass, http, base: str, hdrs: dict, ssl) -> None:
+    """Works through the queued artists one at a time, at MusicBrainz's pace."""
+    dom = hass.data.setdefault(DOMAIN, {})
+    pend = dom.setdefault("_altart_pending", {})   # insertion-ordered: first asked, first done
+    known = dom.setdefault("_altart", {})
+    try:
+        lib: dict[str, dict] = {}
+        try:
+            async with http.get(
+                f"{base}/api/v1/artist", headers=hdrs, ssl=ssl,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as r:
+                for a in (await r.json(content_type=None) if r.status == 200 else []) or []:
+                    lib[str(a.get("foreignArtistId") or "").lower()] = a
+        except Exception:  # noqa: BLE001 - without the library only links are used
+            pass
+        refused = 0
+        while pend:
+            mbid = next(iter(pend))
+            a = lib.get(mbid) or {}
+            titles: list[str] = []
+            if a.get("id"):
+                try:
+                    async with http.get(
+                        f"{base}/api/v1/album", params={"artistId": str(a["id"])},
+                        headers=hdrs, ssl=ssl, timeout=aiohttp.ClientTimeout(total=30),
+                    ) as r:
+                        titles = [x.get("title") or "" for x in (await r.json(content_type=None) if r.status == 200 else []) or []]
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                entry = await _altart_resolve(http, mbid, a.get("artistName") or "", titles, dom)
+            except _AltartRetry:
+                # A source asked to slow down: wait and carry on. Only a long
+                # run of refusals - the network is down - stops the worker; the
+                # next request starts it again.
+                refused += 1
+                if refused > 20:
+                    break
+                await asyncio.sleep(5)
+                continue
+            refused = 0
+            known[mbid] = {**(entry or {}), "t": _time.time()}
+            pend.pop(mbid, None)
+    finally:
+        dom["_altart_running"] = False
+
+
 def _shrink_image(raw: bytes, width: int, ct: str) -> tuple[bytes, str]:
     """Downscale a cover to `width`, in a worker thread. Returns the original
     bytes unchanged if Pillow is missing or the image is already small enough —
@@ -950,9 +1121,15 @@ class ArrStackProxyView(HomeAssistantView):
         # ════════════════════════════════════════════
         # Radarr
         # ════════════════════════════════════════════
-        elif service == "radarr":
-            base = cfg.get(CONF_RADARR_URL, "").rstrip("/")
-            hdrs = {"X-Api-Key": cfg.get(CONF_RADARR_KEY, "")}
+        elif service in ("radarr", "radarr2"):
+            # Both Radarr instances answer from these routes; they differ only in
+            # address and key. The second one says _notConfigured when it is not
+            # set up, which is how the card knows to leave it out.
+            second = service == "radarr2"
+            if second and not cfg.get(CONF_RADARR2_URL):
+                return web.json_response({"_notConfigured": True})
+            base = cfg.get(CONF_RADARR2_URL if second else CONF_RADARR_URL, "").rstrip("/")
+            hdrs = {"X-Api-Key": cfg.get(CONF_RADARR2_KEY if second else CONF_RADARR_KEY, "")}
 
             if path == "movies":
                 url = f"{base}/api/v3/movie"
@@ -1195,9 +1372,15 @@ class ArrStackProxyView(HomeAssistantView):
         # ════════════════════════════════════════════
         # Sonarr
         # ════════════════════════════════════════════
-        elif service == "sonarr":
-            base = cfg.get(CONF_SONARR_URL, "").rstrip("/")
-            hdrs = {"X-Api-Key": cfg.get(CONF_SONARR_KEY, "")}
+        elif service in ("sonarr", "sonarr2"):
+            # Both Sonarr instances answer from these routes; they differ only in
+            # address and key. The second one says _notConfigured when it is not
+            # set up, which is how the card knows to leave it out.
+            second = service == "sonarr2"
+            if second and not cfg.get(CONF_SONARR2_URL):
+                return web.json_response({"_notConfigured": True})
+            base = cfg.get(CONF_SONARR2_URL if second else CONF_SONARR_URL, "").rstrip("/")
+            hdrs = {"X-Api-Key": cfg.get(CONF_SONARR2_KEY if second else CONF_SONARR_KEY, "")}
 
             if path == "profiles":
                 async with http.get(
@@ -1447,422 +1630,6 @@ class ArrStackProxyView(HomeAssistantView):
                 ) as r:
                     body = await r.read()
                     return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
-
-        # ════════════════════════════════════════════
-        # Radarr 2
-        # ════════════════════════════════════════════
-        elif service == "radarr2":
-            if not cfg.get(CONF_RADARR2_URL):
-                return web.json_response({"_notConfigured": True})
-            base = cfg.get(CONF_RADARR2_URL, "").rstrip("/")
-            hdrs = {"X-Api-Key": cfg.get(CONF_RADARR2_KEY, "")}
-
-            if path == "movies":
-                url = f"{base}/api/v3/movie"
-                if debug: _LOGGER.debug("arr_stack radarr2 → GET %s", url)
-                async with http.get(url, headers=hdrs, ssl=ssl) as r:
-                    body = await r.read()
-                    if debug: _LOGGER.debug("arr_stack radarr2 ← status=%s len=%s", r.status, len(body))
-                    return web.Response(body=body, content_type="application/json", status=r.status)
-
-            if path == "profiles":
-                async with http.get(f"{base}/api/v3/qualityprofile", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "tags":
-                async with http.get(f"{base}/api/v3/tag", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "qualitydefs":
-                async with http.get(f"{base}/api/v3/qualitydefinition", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "languages":
-                async with http.get(f"{base}/api/v3/language", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "rootfolders":
-                async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "diskspace":
-                async with http.get(f"{base}/api/v3/diskspace", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "queue":
-                # Same as the first instance: without includeUnknownMovieItems,
-                # Radarr leaves out rows with no movie attached — exactly the
-                # ones waiting for a manual import, which is what the card is
-                # there to surface.
-                incl = request.query.get("includeUnknownMovieItems", "false")
-                async with http.get(
-                    f"{base}/api/v3/queue?includeMovie=false&pageSize=100&includeUnknownMovieItems={incl}",
-                    headers=hdrs,
-                    ssl=ssl,
-                ) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "release" and method == "GET":
-                movie_id = request.query.get("movieId", "")
-                if not movie_id:
-                    return web.json_response({"error": "movieId required"}, status=400)
-                timeout = aiohttp.ClientTimeout(total=120)
-                async with http.get(f"{base}/api/v3/release", headers=hdrs, params={"movieId": movie_id}, timeout=timeout, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "movie" and method == "POST":
-                body = await request.json()
-                async with http.post(f"{base}/api/v3/movie", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path.startswith("movie/") and method == "DELETE":
-                movie_id = path.split("/", 1)[1]
-                delete_files = request.query.get("deleteFiles", "false")
-                add_exclusion = request.query.get("addExclusion", "false")
-                async with http.delete(
-                    f"{base}/api/v3/movie/{movie_id}",
-                    headers=hdrs,
-                    # Radarr names this addImportExclusion, Sonarr addImportListExclusion.
-                    # Sending both keeps the exclusion working across versions — the
-                    # unknown one is ignored, and without it import lists re-add the movie.
-                    params={
-                        "deleteFiles": delete_files,
-                        "addImportExclusion": add_exclusion,
-                        "addImportListExclusion": add_exclusion,
-                    },
-                    timeout=aiohttp.ClientTimeout(total=60),
-                    ssl=ssl,
-                ) as r:
-                    body = await r.read()
-                    return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
-
-            if path == "release" and method == "POST":
-                body = await request.json()
-                async with http.post(f"{base}/api/v3/release", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "history" and method == "GET":
-                movie_id = request.query.get("movieId", "")
-                async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "calendar" and method == "GET":
-                params = {**dict(request.query), "unmonitored": "true"}
-                async with http.get(f"{base}/api/v3/calendar", headers=hdrs, params=params, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "movie-editor" and method == "PUT":
-                body = await request.json()
-                async with http.put(f"{base}/api/v3/movie/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "movie-editor" and method == "DELETE":
-                body = await request.json()
-                # Radarr calls it addImportExclusion, Sonarr addImportListExclusion;
-                # send both so the list exclusion is really created either way.
-                _excl = body.get("addImportExclusion", body.get("addImportListExclusion"))
-                if _excl is not None:
-                    body["addImportExclusion"] = _excl
-                    body["addImportListExclusion"] = _excl
-                async with http.delete(f"{base}/api/v3/movie/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "command" and method == "POST":
-                body = await request.json()
-                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path.startswith("command/") and method == "GET":
-                cmd_id = path.split("/", 1)[1]
-                async with http.get(f"{base}/api/v3/command/{cmd_id}", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "wanted/missing" and method == "GET":
-                page      = request.query.get("page", "1")
-                page_size = request.query.get("pageSize", "250")
-                sort_key  = request.query.get("sortKey", "title")
-                sort_dir  = request.query.get("sortDir", "asc")
-                sort_dir  = "descending" if sort_dir in ("desc", "descending") else "ascending"
-                async with http.get(f"{base}/api/v3/wanted/missing", headers=hdrs, params={"page": page, "pageSize": page_size, "sortKey": sort_key, "sortDirection": sort_dir, "includeMovie": "true"}, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path.startswith("movie/") and method == "PUT":
-                movie_id = path.split("/", 1)[1]
-                body = await request.json()
-                async with http.put(f"{base}/api/v3/movie/{movie_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-
-
-            if path == "manualimport" and method == "GET":
-                download_id = request.query.get("downloadId", "")
-                movie_id    = request.query.get("movieId", "")
-                folder      = request.query.get("folder", "")
-                params = {"filterExistingFiles": request.query.get("filterExistingFiles", "true")}
-                if folder:
-                    params["folder"] = folder
-                elif download_id:
-                    params["downloadId"] = download_id
-                if movie_id:    params["movieId"]    = movie_id
-                async with http.get(f"{base}/api/v3/manualimport", headers=hdrs, params=params, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "manualimport" and method == "POST":
-                body = await request.json()
-                async with http.post(f"{base}/api/v3/manualimport", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "activity/history" and method == "GET":
-                page       = request.query.get("page", "1")
-                page_size  = request.query.get("pageSize", "20")
-                sort_key   = request.query.get("sortKey", "date")
-                sort_dir   = request.query.get("sortDir", "desc")
-                sort_dir   = "descending" if sort_dir in ("desc", "descending") else "ascending"
-                event_type = request.query.get("eventType", "")
-                _event_map = {"grabbed":2,"downloadFolderImported":3,"downloadFailed":4,"movieFileDeleted":5,"movieFolderImported":6,"movieFileRenamed":7,"episodeFileDeleted":5,"episodeFileRenamed":6,"downloadIgnored":7,"seriesFolderImported":8}
-                params = {"page": page, "pageSize": page_size, "sortKey": sort_key, "sortDirection": sort_dir, "includeMovie": "true"}
-                if event_type:
-                    params["eventType"] = _event_map.get(event_type, event_type)
-                async with http.get(f"{base}/api/v3/history", headers=hdrs, params=params, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "activity/blocklist" and method == "GET":
-                page      = request.query.get("page", "1")
-                page_size = request.query.get("pageSize", "20")
-                async with http.get(f"{base}/api/v3/blocklist", headers=hdrs, params={"page": page, "pageSize": page_size}, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path.startswith("activity/blocklist/") and method == "DELETE":
-                bl_id = path.split("/")[-1]
-                async with http.delete(f"{base}/api/v3/blocklist/{bl_id}", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path.startswith("queue/") and method == "DELETE":
-                q_id = path.split("/")[-1]
-                remove = request.query.get("removeFromClient", "true")
-                blocklist_param = request.query.get("blocklist", "false")
-                skip = request.query.get("skipRedownload", "false")
-                async with http.delete(f"{base}/api/v3/queue/{q_id}", headers=hdrs, params={"removeFromClient": remove, "blocklist": blocklist_param, "skipRedownload": skip}, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-        # ════════════════════════════════════════════
-        # Sonarr 4K
-        # ════════════════════════════════════════════
-        elif service == "sonarr2":
-            if not cfg.get(CONF_SONARR2_URL):
-                return web.json_response({"_notConfigured": True})
-            base = cfg.get(CONF_SONARR2_URL, "").rstrip("/")
-            hdrs = {"X-Api-Key": cfg.get(CONF_SONARR2_KEY, "")}
-
-            if path == "profiles":
-                async with http.get(f"{base}/api/v3/qualityprofile", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "tags":
-                async with http.get(f"{base}/api/v3/tag", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "qualitydefs":
-                async with http.get(f"{base}/api/v3/qualitydefinition", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "languages":
-                async with http.get(f"{base}/api/v3/language", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "rootfolders":
-                async with http.get(f"{base}/api/v3/rootfolder", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "diskspace":
-                async with http.get(f"{base}/api/v3/diskspace", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "queue":
-                # Unknown items are the ones stuck waiting for a manual import;
-                # leaving them out hid exactly what the queue is for.
-                incl = request.query.get("includeUnknownSeriesItems", "false")
-                async with http.get(f"{base}/api/v3/queue?pageSize=200&includeUnknownSeriesItems={incl}&includeEpisode=true&includeSeries=true", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "series" and method == "GET":
-                url = f"{base}/api/v3/series"
-                if debug: _LOGGER.debug("arr_stack sonarr2 → GET %s", url)
-                async with http.get(url, headers=hdrs, ssl=ssl) as r:
-                    body = await r.read()
-                    if debug: _LOGGER.debug("arr_stack sonarr2 ← status=%s len=%s", r.status, len(body))
-                    return web.Response(body=body, content_type="application/json", status=r.status)
-
-            if path == "series" and method == "POST":
-                body = await request.json()
-                async with http.post(
-                    f"{base}/api/v3/series",
-                    headers={**hdrs, "Content-Type": "application/json"},
-                    json=body,
-                    ssl=ssl,
-                ) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "release" and method == "GET":
-                timeout = aiohttp.ClientTimeout(total=120)
-                params = {k: v for k, v in request.query.items()}
-                async with http.get(f"{base}/api/v3/release", headers=hdrs, params=params, timeout=timeout, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "release" and method == "POST":
-                body = await request.json()
-                async with http.post(f"{base}/api/v3/release", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "lookup" and method == "GET":
-                tvdb_id = request.query.get("tvdbId", "")
-                term = f"tvdb:{tvdb_id}" if tvdb_id else request.query.get("term", "")
-                async with http.get(f"{base}/api/v3/series/lookup", headers=hdrs, params={"term": term}, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "calendar":
-                params = {**dict(request.query), "includeSeries": "true", "unmonitored": "false"}
-                async with http.get(f"{base}/api/v3/calendar", headers=hdrs, params=params, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "episodes" and method == "GET":
-                params = {"seriesId": request.query.get("seriesId", "")}
-                if request.query.get("seasonNumber"):
-                    params["seasonNumber"] = request.query["seasonNumber"]
-                async with http.get(f"{base}/api/v3/episode", headers=hdrs, params=params, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "episodefiles" and method == "GET":
-                series_id = request.query.get("seriesId", "")
-                async with http.get(f"{base}/api/v3/episodefile", headers=hdrs, params={"seriesId": series_id}, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path.startswith("episodefile/") and method == "DELETE":
-                ef_id = path.split("/", 1)[1]
-                async with http.delete(f"{base}/api/v3/episodefile/{ef_id}", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "episodefile-bulk" and method == "DELETE":
-                body = await request.json()
-                async with http.delete(f"{base}/api/v3/episodefile/bulk", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "history" and method == "GET":
-                series_id = request.query.get("seriesId", "")
-                async with http.get(f"{base}/api/v3/history/series", headers=hdrs, params={"seriesId": series_id, "pageSize": "200"}, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "recentimports" and method == "GET":
-                async with http.get(f"{base}/api/v3/history", headers=hdrs, params={"pageSize": "100", "sortKey": "date", "sortDir": "desc"}, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path.startswith("series/") and method == "PUT":
-                series_id = path.split("/", 1)[1]
-                body = await request.json()
-                async with http.put(f"{base}/api/v3/series/{series_id}", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path.startswith("series/") and method == "DELETE":
-                series_id = path.split("/", 1)[1]
-                delete_files = request.query.get("deleteFiles", "false")
-                add_exclusion = request.query.get("addExclusion", "false")
-                async with http.delete(
-                    f"{base}/api/v3/series/{series_id}",
-                    headers=hdrs,
-                    params={"deleteFiles": delete_files, "addImportListExclusion": add_exclusion},
-                    timeout=aiohttp.ClientTimeout(total=60),
-                    ssl=ssl,
-                ) as r:
-                    body = await r.read()
-                    return web.json_response({}, status=r.status) if not body.strip() else web.Response(body=body, content_type="application/json", status=r.status)
-
-            if path == "series-editor" and method == "PUT":
-                body = await request.json()
-                async with http.put(f"{base}/api/v3/series/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "series-editor" and method == "DELETE":
-                body = await request.json()
-                # Radarr calls it addImportExclusion, Sonarr addImportListExclusion;
-                # send both so the list exclusion is really created either way.
-                _excl = body.get("addImportExclusion", body.get("addImportListExclusion"))
-                if _excl is not None:
-                    body["addImportExclusion"] = _excl
-                    body["addImportListExclusion"] = _excl
-                async with http.delete(f"{base}/api/v3/series/editor", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "command" and method == "POST":
-                body = await request.json()
-                async with http.post(f"{base}/api/v3/command", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path.startswith("command/") and method == "GET":
-                cmd_id = path.split("/", 1)[1]
-                async with http.get(f"{base}/api/v3/command/{cmd_id}", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "wanted/missing" and method == "GET":
-                page      = request.query.get("page", "1")
-                page_size = request.query.get("pageSize", "250")
-                sort_key  = request.query.get("sortKey", "airDateUtc")
-                sort_dir  = request.query.get("sortDir", "desc")
-                sort_dir  = "descending" if sort_dir in ("desc", "descending") else "ascending"
-                async with http.get(f"{base}/api/v3/wanted/missing", headers=hdrs, params={"page": page, "pageSize": page_size, "sortKey": sort_key, "sortDirection": sort_dir, "includeSeries": "true"}, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-
-            if path == "manualimport" and method == "GET":
-                download_id = request.query.get("downloadId", "")
-                series_id   = request.query.get("seriesId", "")
-                folder      = request.query.get("folder", "")
-                params = {"filterExistingFiles": request.query.get("filterExistingFiles", "true")}
-                if folder:
-                    params["folder"] = folder
-                elif download_id:
-                    params["downloadId"] = download_id
-                if series_id:   params["seriesId"]   = series_id
-                if folder:      params["folder"]     = folder
-                async with http.get(f"{base}/api/v3/manualimport", headers=hdrs, params=params, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "manualimport" and method == "POST":
-                body = await request.json()
-                async with http.post(f"{base}/api/v3/manualimport", headers={**hdrs, "Content-Type": "application/json"}, json=body, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "activity/history" and method == "GET":
-                page       = request.query.get("page", "1")
-                page_size  = request.query.get("pageSize", "20")
-                sort_key   = request.query.get("sortKey", "date")
-                sort_dir   = request.query.get("sortDir", "desc")
-                sort_dir   = "descending" if sort_dir in ("desc", "descending") else "ascending"
-                event_type = request.query.get("eventType", "")
-                _event_map = {"grabbed":2,"downloadFolderImported":3,"downloadFailed":4,"movieFileDeleted":5,"movieFolderImported":6,"movieFileRenamed":7,"episodeFileDeleted":5,"episodeFileRenamed":6,"downloadIgnored":7,"seriesFolderImported":8}
-                params = {"page": page, "pageSize": page_size, "sortKey": sort_key, "sortDirection": sort_dir, "includeSeries": "true", "includeEpisode": "true"}
-                if event_type:
-                    params["eventType"] = _event_map.get(event_type, event_type)
-                async with http.get(f"{base}/api/v3/history", headers=hdrs, params=params, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path == "activity/blocklist" and method == "GET":
-                page      = request.query.get("page", "1")
-                page_size = request.query.get("pageSize", "20")
-                async with http.get(f"{base}/api/v3/blocklist", headers=hdrs, params={"page": page, "pageSize": page_size}, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path.startswith("activity/blocklist/") and method == "DELETE":
-                bl_id = path.split("/")[-1]
-                async with http.delete(f"{base}/api/v3/blocklist/{bl_id}", headers=hdrs, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
-
-            if path.startswith("queue/") and method == "DELETE":
-                q_id = path.split("/")[-1]
-                remove = request.query.get("removeFromClient", "true")
-                blocklist_param = request.query.get("blocklist", "false")
-                skip = request.query.get("skipRedownload", "false")
-                async with http.delete(f"{base}/api/v3/queue/{q_id}", headers=hdrs, params={"removeFromClient": remove, "blocklist": blocklist_param, "skipRedownload": skip}, ssl=ssl) as r:
-                    return _arr_json(await r.read(), r.status)
 
         # ════════════════════════════════════════════
         # Overseerr
@@ -3700,6 +3467,53 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "artists" and method == "GET":
                 async with http.get(f"{base}/api/v1/artist", headers=hdrs, ssl=ssl) as r:
                     return _arr_json(await r.read(), r.status)
+
+            # Where Deezer keeps artwork Lidarr has none of (see _altart_resolve).
+            # Answers at once with what is known; the rest is looked up in the
+            # background, and the reply says how many are still waiting.
+            if path == "altart" and method == "GET":
+                wanted: list[str] = []
+                for m in request.query.get("artists", "").split(","):
+                    m = m.strip().lower()
+                    if _MBID_RE.match(m) and m not in wanted:
+                        wanted.append(m)
+                wanted = wanted[:300]
+                # Held in memory only - nothing is written into Home Assistant.
+                # After a restart it is looked up again, and the browser, which
+                # keeps its own copy, does not even need to ask.
+                dom = self._hass.data.setdefault(DOMAIN, {})
+                known = dom.setdefault("_altart", {})
+                now = _time.time()
+                out: dict = {}
+                todo: list[str] = []
+                for m in wanted:
+                    hit = known.get(m)
+                    found = bool(hit and (hit.get("p") or hit.get("a")))
+                    # A find is kept a month, a miss a week - Deezer grows.
+                    ttl = 30 * 86400 if found else 7 * 86400
+                    if hit and now - hit.get("t", 0) < ttl:
+                        out[m] = {"p": hit.get("p"), "a": hit.get("a") or {}} if found else None
+                    else:
+                        todo.append(m)
+                pend = dom.setdefault("_altart_pending", {})
+                for m in todo:
+                    pend.setdefault(m, True)
+                # The artist someone is opening right now jumps the queue.
+                first = request.query.get("first", "").strip().lower()
+                if first in pend and next(iter(pend)) != first:
+                    rest = [k for k in pend if k != first]
+                    pend.clear()
+                    pend[first] = True
+                    for k in rest:
+                        pend[k] = True
+                if pend and not dom.get("_altart_running"):
+                    dom["_altart_running"] = True
+                    self._hass.async_create_background_task(
+                        _altart_worker(self._hass, http, base, dict(hdrs), ssl),
+                        "arr_stack_altart",
+                    )
+                out["_pending"] = len(pend)
+                return web.json_response(out)
 
             # Lidarr caches artwork locally and then rewrites the payload's URLs
             # to container paths, so the browser cannot fetch them and the remote
