@@ -1683,6 +1683,63 @@ class ArrStackProxyView(HomeAssistantView):
                         status=r.status,
                     )
 
+            # GET overseerr/similar?type=movie|tv&id=<tmdb>[&kinds=movie,tv]
+            # [&since=YYYY][&until=YYYY][&country=CZ][&kw=1,2][&lang=cs]  →
+            # titles like this one by what it is about (see _similar_content)
+            if path == "similar" and method == "GET":
+                kind = "tv" if request.query.get("type") == "tv" else "movie"
+                tmdb_id = request.query.get("id", "")
+                if not tmdb_id.isdigit():
+                    return web.json_response({"error": "id required"}, status=400)
+                t = aiohttp.ClientTimeout(total=15)
+
+                async def _sj(url):
+                    async with http.get(url, headers=hdrs, ssl=ssl, timeout=t) as r:
+                        return await r.json() if r.status == 200 else {}
+
+                async def details():
+                    d = await _sj(f"{base}/api/v1/{kind}/{tmdb_id}")
+                    kw = d.get("keywords") or []
+                    if isinstance(kw, dict):
+                        kw = kw.get("keywords") or kw.get("results") or []
+                    return d, kw
+
+                async def listed(name):
+                    return (await _sj(f"{base}/api/v1/{kind}/{tmdb_id}/{name}?page=1")).get("results") or []
+
+                # Seerr's discover has no country of origin, only the original
+                # language — asked for the country's own language, so a Czech
+                # filter gets Czech films to check rather than twenty American ones
+                async def discover(dkind, kid, since, until, countries):
+                    movie = dkind == "movie"
+                    extra = ""
+                    if since:
+                        extra += f"&{'primaryReleaseDateGte' if movie else 'firstAirDateGte'}={since}-01-01"
+                    if until:
+                        extra += f"&{'primaryReleaseDateLte' if movie else 'firstAirDateLte'}={until}-12-31"
+                    # One country has a language worth asking in. Several
+                    # would each pull the answer towards one of them, so none is
+                    # sent and the origin filter below does the work.
+                    lang = self._SIM_COUNTRY_LANG.get(countries[0]) if len(countries) == 1 else None
+                    if lang:
+                        extra += f"&language={lang}"
+                    d = await _sj(f"{base}/api/v1/discover/{'movies' if movie else 'tv'}?page=1&keywords={kid}{extra}")
+                    return d.get("results") or [], d.get("totalResults") or 0
+
+                async def genre_list(gkind, lang):
+                    d = await _sj(f"{base}/api/v1/genres/{gkind}?language={lang}")
+                    return d if isinstance(d, list) else []
+
+                async def origin(okind, oid):
+                    d = await _sj(f"{base}/api/v1/{okind}/{oid}")
+                    return d.get("originCountry") or [c.get("iso_3166_1") for c in (d.get("productionCountries") or []) if c.get("iso_3166_1")]
+
+                async def person(pid):
+                    return (await _sj(f"{base}/api/v1/person/{pid}/combined_credits")).get("cast") or []
+
+                return web.json_response(await self._similar_content(
+                    "seerr", kind, tmdb_id, request.query, details, listed, discover, genre_list, origin, person))
+
             if path == "popular":
                 page = request.query.get("page", "1")
                 async with http.get(
@@ -2441,6 +2498,7 @@ class ArrStackProxyView(HomeAssistantView):
                     "voteAverage": item.get("vote_average", 0),
                     "voteCount":   item.get("vote_count", 0),
                     "genreIds":    item.get("genre_ids", []),
+                    "originCountry": item.get("origin_country") or [],
                 }
 
             def _tmdb_page(data, force_type=None):
@@ -2475,6 +2533,52 @@ class ArrStackProxyView(HomeAssistantView):
             if path == "tv_upcoming" and method == "GET":
                 async with http.get(f"{_TMDB_BASE}/tv/on_the_air", params={**base_params, "page": page}, timeout=timeout) as r:
                     return web.json_response(_tmdb_page(await r.json(), "tv"))
+
+            # GET tmdb/similar?…  →  the same as overseerr/similar, asked of TMDB
+            # when there is no Seerr
+            if path == "similar" and method == "GET":
+                kind = "tv" if request.rel_url.query.get("type") == "tv" else "movie"
+                tmdb_id = request.rel_url.query.get("id", "")
+                if not tmdb_id.isdigit():
+                    return web.json_response({"error": "id required"}, status=400)
+
+                async def _tj(p, **params):
+                    async with http.get(f"{_TMDB_BASE}{p}", params={**base_params, **params}, timeout=timeout) as r:
+                        return await r.json() if r.status == 200 else {}
+
+                async def details():
+                    d = await _tj(f"/{kind}/{tmdb_id}", append_to_response="keywords,credits")
+                    kw = d.get("keywords") or {}
+                    return d, (kw.get("keywords") or kw.get("results") or [])
+
+                async def listed(name):
+                    return _tmdb_page(await _tj(f"/{kind}/{tmdb_id}/{name}", page="1"), kind)["results"]
+
+                async def discover(dkind, kid, since, until, countries):
+                    movie = dkind == "movie"
+                    params = {"with_keywords": str(kid), "sort_by": "vote_count.desc", "page": "1"}
+                    if since:
+                        params["primary_release_date.gte" if movie else "first_air_date.gte"] = f"{since}-01-01"
+                    if until:
+                        params["primary_release_date.lte" if movie else "first_air_date.lte"] = f"{until}-12-31"
+                    if countries:
+                        params["with_origin_country"] = "|".join(countries)   # TMDB: any of these
+                    d = await _tj(f"/discover/{dkind}", **params)
+                    return _tmdb_page(d, dkind)["results"], d.get("total_results") or 0
+
+                async def genre_list(gkind, lang):
+                    return (await _tj(f"/genre/{gkind}/list", language=lang)).get("genres") or []
+
+                async def origin(okind, oid):
+                    d = await _tj(f"/{okind}/{oid}")
+                    return d.get("origin_country") or [c.get("iso_3166_1") for c in (d.get("production_countries") or []) if c.get("iso_3166_1")]
+
+                async def person(pid):
+                    d = await _tj(f"/person/{pid}/combined_credits")
+                    return [_tmdb_item(x) for x in (d.get("cast") or []) if x.get("media_type") in ("movie", "tv")]
+
+                return web.json_response(await self._similar_content(
+                    "tmdb", kind, tmdb_id, request.rel_url.query, details, listed, discover, genre_list, origin, person))
 
             if path == "search" and method == "POST":
                 body = await request.json()
@@ -3040,6 +3144,61 @@ class ArrStackProxyView(HomeAssistantView):
                 }
                 return web.json_response(enriched[:want])
 
+            async def _lfm_get(params):
+                try:
+                    async with http.get(
+                        "https://ws.audioscrobbler.com/2.0/",
+                        params={**params, "api_key": api_key, "format": "json"},
+                        timeout=aiohttp.ClientTimeout(total=15),
+                    ) as r:
+                        return await r.json(content_type=None)
+                except Exception:
+                    return None
+
+            # GET lastfm/tags?mbid=…|artist=…  →  an artist's top tags: the
+            # genres listeners give it, which Similar titles offers for music
+            if path == "tags" and method == "GET":
+                mbid = request.query.get("mbid", "").strip().lower()
+                name = request.query.get("artist", "").strip()
+                params = {"method": "artist.gettoptags", "autocorrect": "1"}
+                if _MBID_RE.match(mbid):
+                    params["mbid"] = mbid
+                elif name:
+                    params["artist"] = name
+                else:
+                    return web.json_response({"tags": []})
+                d = await _lfm_get(params)
+                raw = ((d or {}).get("toptags") or {}).get("tag") or []
+                tags = [
+                    t.get("name") for t in raw
+                    if t.get("name") and int(t.get("count") or 0) >= 10
+                    and t["name"].strip().lower() not in self._LFM_TAG_SKIP
+                ]
+                return web.json_response({"tags": tags[:12]})
+
+            # GET lastfm/tagartists?tags=a,b  →  the artists most tagged with
+            # them, one found under several tags first, with their Lidarr records
+            if path == "tagartists" and method == "GET":
+                tags = [t.strip() for t in request.query.get("tags", "").split(",") if t.strip()][:5]
+                if not tags:
+                    return web.json_response({"artists": []})
+                res = await asyncio.gather(*[
+                    _lfm_get({"method": "tag.gettopartists", "tag": t, "limit": "40"}) for t in tags
+                ])
+                scored = {}
+                for d in res:
+                    arr = ((d or {}).get("topartists") or {}).get("artist") or []
+                    for i, a in enumerate(arr):
+                        nm = (a.get("name") or "").strip()
+                        if not nm:
+                            continue
+                        mb = (a.get("mbid") or "").strip().lower() or None
+                        e = scored.setdefault(mb or nm.lower(), {"name": nm, "mbid": mb, "score": 0.0})
+                        e["score"] += 1 - i / (len(arr) + 1)
+                artists = sorted(scored.values(), key=lambda e: -e["score"])[:40]
+                await self._lidarr_records(cfg, http, ssl, artists)
+                return web.json_response({"artists": artists})
+
             if path == "similar" and method == "GET":
                 mbid = request.query.get("mbid", "").strip().lower()
                 name = request.query.get("artist", "").strip()
@@ -3070,7 +3229,7 @@ class ArrStackProxyView(HomeAssistantView):
                 if not isinstance(d, dict) or "similarartists" not in d:
                     return web.json_response({"artists": [], "error": (d or {}).get("message")})
                 raw = (d.get("similarartists") or {}).get("artist") or []
-                return web.json_response({"artists": [
+                artists = [
                     {
                         "name": a.get("name"),
                         "mbid": a.get("mbid") or None,
@@ -3079,7 +3238,13 @@ class ArrStackProxyView(HomeAssistantView):
                         "url": a.get("url"),
                     }
                     for a in raw if a.get("name")
-                ]})
+                ]
+                # enrich=1: each artist's Lidarr lookup record as well — the one
+                # the suggestions row draws, with the artwork, and the one the
+                # preview window opens with
+                if request.query.get("enrich") == "1":
+                    await self._lidarr_records(cfg, http, ssl, artists)
+                return web.json_response({"artists": artists})
 
             return web.Response(status=404)
 
@@ -3420,6 +3585,161 @@ class ArrStackProxyView(HomeAssistantView):
                     f"{base}/api/v1/calendar", params=params, headers=hdrs, ssl=ssl,
                 ) as r:
                     return _arr_json(await r.read(), r.status)
+
+            # GET lidarr/soundtrack?title=…[&year=YYYY][&composers=A|B]  →  the
+            # music of a film or series: its composers, as its credits name
+            # them; then the artist of a soundtrack album of that title on
+            # Deezer; MusicBrainz only when Deezer has none. Each with its Lidarr
+            # lookup record.
+            if path == "soundtrack" and method == "GET":
+                title = (request.query.get("title") or "").strip()
+                year = request.query.get("year", "")
+                composers = [c.strip() for c in request.query.get("composers", "").split("|") if c.strip()][:4]
+                if not title and not composers:
+                    return web.json_response({"artists": []})
+                st_key = f"{title}|{year}|{'|'.join(composers)}"
+                st_cache = self._hass.data.setdefault(DOMAIN, {}).setdefault("_mb_soundtrack", {})
+                if st_key in st_cache:
+                    return web.json_response(st_cache[st_key])
+
+                artists = [{"name": c, "mbid": None, "source": "credits"} for c in composers]
+                seen_nm = {c.lower() for c in composers}
+                failed = False
+
+                if title:
+                    # Deezer's search is loose, which finds a soundtrack filed
+                    # under any wording — and covers, game scores and
+                    # compilations with it. Only an album whose title starts
+                    # with the film's and says what it is, by someone who is
+                    # not a cover act, and not released before the film.
+                    t_norm = _norm_title(title)
+                    marks = ("soundtrack", "score", "music from", "motion picture", "original series",
+                             "bande originale", "filmmusik", "banda sonora", " ost")
+                    cover = re.compile(
+                        r"\b(soundtrack|movie|film|tv|cinema|screen|hollywood)\b.*\b(orchestra|band|ensemble|players|sounds?|singers|crew)\b"
+                        r"|piano|lullab|karaoke|tribute|cover|8.?bit|guitar|various artists", re.I)
+                    hits = (await self._deezer(http, "search/album", q=f"{title} soundtrack", limit=25)).get("data") or []
+                    cands = []
+                    for h in hits:
+                        at = str(h.get("title") or "")
+                        low = f" {at.lower()}"
+                        an = str((h.get("artist") or {}).get("name") or "").strip()
+                        if h.get("record_type") != "album" or not _norm_title(at).startswith(t_norm):
+                            continue
+                        if not any(m in low for m in marks) or "game" in low:
+                            continue
+                        if not an or cover.search(an):
+                            continue
+                        cands.append((h.get("id"), an, at))
+                    if year.isdigit() and cands:
+                        y = int(year)
+                        kept = []
+                        for aid, an, at in cands[:4]:
+                            rd = str((await self._deezer(http, f"album/{aid}")).get("release_date") or "")[:4]
+                            if not rd.isdigit() or int(rd) >= y - 1:
+                                kept.append((aid, an, at))
+                        cands = kept
+                    for _, an, at in cands:
+                        if an.lower() not in seen_nm:
+                            seen_nm.add(an.lower())
+                            artists.append({"name": an, "mbid": None, "soundtrack": at, "source": "deezer"})
+
+                if title and not any(a["source"] == "deezer" for a in artists):
+                    lock = self._hass.data[DOMAIN].setdefault("_mb_lock", asyncio.Lock())
+
+                    async def _mb_groups(query):
+                        try:
+                            async with http.get(
+                                "https://musicbrainz.org/ws/2/release-group",
+                                params={"query": query, "fmt": "json", "limit": "5"},
+                                headers={
+                                    "User-Agent": "arr-stack-card/1.0 (https://github.com/martinargalas/ha-arr-stack-card)",
+                                    "Accept": "application/json",
+                                },
+                                timeout=aiohttp.ClientTimeout(total=15),
+                            ) as r:
+                                if r.status != 200:
+                                    return None
+                                return (await r.json(content_type=None) or {}).get("release-groups") or []
+                        except Exception:
+                            return None
+
+                    # Lucene: quotes and backslashes would end the phrase early
+                    base_q = 'releasegroup:"' + re.sub(r'[\\"]', " ", title) + '" AND secondarytype:soundtrack'
+                    async with lock:
+                        if year.isdigit():
+                            y = int(year)
+                            groups = await _mb_groups(base_q + f" AND firstreleasedate:[{y - 1} TO {y + 1}]")
+                            # A release date is often missing, or a reissue's
+                            if groups == []:
+                                await asyncio.sleep(1.1)   # MusicBrainz: one request a second
+                                groups = await _mb_groups(base_q)
+                        else:
+                            groups = await _mb_groups(base_q)
+                    if groups is None:
+                        failed, groups = True, []
+                    various = "89ad4ac3-39f7-470e-963a-56509c546377"
+                    seen_mb = set()
+                    for g in groups:
+                        # A loose match on a short title ("2012") is another film's
+                        if int(g.get("score") or 0) < 80:
+                            continue
+                        for c in g.get("artist-credit") or []:
+                            a = c.get("artist") if isinstance(c, dict) else None
+                            mb = str((a or {}).get("id") or "").lower()
+                            nm = str((a or {}).get("name") or "").strip()
+                            if not mb or mb == various or mb in seen_mb:
+                                continue
+                            seen_mb.add(mb)
+                            if nm.lower() in seen_nm:
+                                # The composer again, now with an id to look up by
+                                for x in artists:
+                                    if x["name"].lower() == nm.lower() and not x["mbid"]:
+                                        x["mbid"] = mb
+                                continue
+                            seen_nm.add(nm.lower())
+                            artists.append({"name": nm, "mbid": mb, "soundtrack": g.get("title"), "source": "musicbrainz"})
+
+                artists = artists[:10]
+                await self._lidarr_records(cfg, http, ssl, artists)
+                # An artist Lidarr cannot place is no artist to show
+                artists = [a for a in artists if a.get("artist") or a.get("mbid")]
+                out = {"artists": artists}
+                # A MusicBrainz failure is not remembered as "no soundtrack"
+                if not failed:
+                    if len(st_cache) > 500:
+                        st_cache.clear()
+                    st_cache[st_key] = out
+                return web.json_response(out)
+
+            # GET lidarr/related?artist=…  →  artists like this one, from
+            # Deezer's related artists — no key, where Last.fm needs one — each
+            # with its Lidarr record, found by exact name (Deezer has no MBIDs)
+            if path == "related" and method == "GET":
+                name = (request.query.get("artist") or "").strip()
+                if not name:
+                    return web.json_response({"artists": []})
+                rc = self._hass.data.setdefault(DOMAIN, {}).setdefault("_dz_related", {})
+                hit = rc.get(name.lower())
+                if hit and _time.monotonic() - hit[0] < 86400:
+                    return web.json_response(hit[1])
+                found = (await self._deezer(http, "search/artist", q=name, limit=5)).get("data") or []
+                exact = sorted(
+                    (h for h in found if _norm_title(h.get("name")) == _norm_title(name)),
+                    key=lambda h: -(h.get("nb_fan") or 0),
+                )
+                if not exact:
+                    return web.json_response({"artists": []})
+                rel = (await self._deezer(http, f"artist/{exact[0]['id']}/related", limit=40)).get("data") or []
+                artists = [{"name": r.get("name"), "mbid": None} for r in rel if r.get("name")]
+                await self._lidarr_records(cfg, http, ssl, artists, limit=40)
+                artists = [a for a in artists if a.get("artist")]
+                out = {"artists": artists}
+                if rel:
+                    if len(rc) > 500:
+                        rc.clear()
+                    rc[name.lower()] = (_time.monotonic(), out)
+                return web.json_response(out)
 
             if path == "origins" and method == "GET":
                 raw = request.query.get("mbids", "")
@@ -4432,6 +4752,316 @@ class ArrStackProxyView(HomeAssistantView):
 
         return web.json_response({"error": "unknown path"}, status=404)
 
+    # Keywords about how a film was made or released rather than what it is
+    _SIM_KW_SKIP = frozenset({
+        "duringcreditsstinger", "aftercreditsstinger", "post-credits scene",
+        "based on novel or book", "based on comic", "based on young adult novel",
+        "sequel", "remake", "live action remake", "woman director", "3d", "imax",
+    })
+
+    # Tags Last.fm listeners give that say nothing about the music
+    _LFM_TAG_SKIP = frozenset({
+        "seen live", "favorites", "favourite", "favorite", "favourites", "albums i own",
+        "under 2000 listeners", "spotify", "love", "awesome", "beautiful", "my favorite",
+    })
+
+    async def _deezer(self, http, path, **params):
+        """One call to Deezer's API: no key, fifty calls in five seconds. An
+        empty dict for a miss, an error or the quota alike."""
+        try:
+            async with http.get(
+                f"https://api.deezer.com/{path}",
+                params={k: str(v) for k, v in params.items()},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                d = await r.json(content_type=None)
+        except Exception:
+            return {}
+        return d if isinstance(d, dict) and not d.get("error") else {}
+
+    async def _lidarr_records(self, cfg, http, ssl, artists, limit=40):
+        """Attach each artist's Lidarr lookup record as "artist": the artwork,
+        the rating, and what the card's preview window opens with. Looked up by
+        MusicBrainz id where there is one, otherwise by name and taken only on
+        an exact match. Six at a time, the first `limit`."""
+        li_url = cfg.get(CONF_LIDARR_URL, "").rstrip("/")
+        li_key = cfg.get(CONF_LIDARR_KEY, "")
+        if not li_url or not li_key:
+            return artists
+        li_hdrs = {"X-Api-Key": li_key, "Accept": "application/json"}
+        sem = asyncio.Semaphore(6)
+
+        async def _look(a):
+            want = (a.get("mbid") or "").lower()
+            term = f"lidarr:{want}" if want else (a.get("name") or "")
+            async with sem:
+                try:
+                    async with http.get(
+                        f"{li_url}/api/v1/artist/lookup",
+                        params={"term": term},
+                        headers=li_hdrs,
+                        timeout=aiohttp.ClientTimeout(total=20),
+                        ssl=ssl,
+                    ) as r:
+                        hits = await r.json(content_type=None) if r.status == 200 else []
+                except Exception:
+                    hits = []
+            hits = hits if isinstance(hits, list) else []
+            if want:
+                return next((h for h in hits if str(h.get("foreignArtistId") or "").lower() == want), None)
+            name = (a.get("name") or "").strip().lower()
+            return next((h for h in hits if str(h.get("artistName") or "").strip().lower() == name), None)
+
+        found = await asyncio.gather(*[_look(a) for a in artists[:limit]])
+        for a, rec in zip(artists, found):
+            if rec:
+                a["artist"] = rec
+                a["mbid"] = a.get("mbid") or str(rec.get("foreignArtistId") or "").lower() or None
+        return artists
+
+    # A country's own film language, where it has one that is not English —
+    # what Seerr's discover can filter on in place of a country
+    _SIM_COUNTRY_LANG = {
+        "CZ": "cs", "SK": "sk", "PL": "pl", "DE": "de", "AT": "de", "FR": "fr", "IT": "it",
+        "ES": "es", "MX": "es", "AR": "es", "PT": "pt", "BR": "pt", "SE": "sv", "DK": "da",
+        "NO": "no", "FI": "fi", "NL": "nl", "HU": "hu", "RO": "ro", "GR": "el", "TR": "tr",
+        "RU": "ru", "UA": "uk", "IL": "he", "IR": "fa", "IN": "hi", "JP": "ja", "KR": "ko",
+        "CN": "zh", "TW": "zh", "HK": "cn", "TH": "th",
+    }
+
+    async def _similar_content(self, src, kind, tmdb_id, q, details, listed, discover, genre_list, origin, person):
+        """Titles like one title, by what it is about.
+
+        TMDB tags every title with keywords ("natural disaster", "tsunami",
+        "end of the world"), shared by films and series. Each keyword is looked
+        up on its own, for every kind asked (`kinds`, default the title's own),
+        and a title scores for every one it shares — weighted by how rare the
+        keyword is, so "tsunami" counts for far more than one on thousands of
+        titles. Similar and Recommendations come along for the card to fill in
+        and confirm with; genre names come in the card's language.
+
+        Query: `kw` the card's own choice of keywords ("1,2", "" for none;
+        absent, the title's first twelve), `since`/`until` the years the keyword
+        matches fall in, `country` an ISO code every title returned must come
+        from, `cast` actor ids whose titles to return as byCast, `lang`
+        cs/en/fr. Seerr and TMDB differ only in the callables:
+        details() -> (detail, keywords), listed(name) -> [items],
+        discover(kind, keyword_id, since, until, countries) -> ([items], total),
+        genre_list(kind, lang) -> [{id, name}], origin(kind, id) -> [iso codes],
+        person(id) -> [the actor's titles].
+        """
+        kw_param = q.get("kw")
+        kinds = [k for k in (q.get("kinds") or kind).split(",") if k in ("movie", "tv")] or [kind]
+        since = q.get("since", "")
+        since = int(since) if since.isdigit() else None
+        until = q.get("until", "")
+        until = int(until) if until.isdigit() else None
+        # One code or several, comma separated. A title counts when it comes
+        # from any one of them: countries are not shared between titles the way
+        # genres are, so these are OR-ed where the genres are AND-ed.
+        countries = [c for c in (q.get("country") or "").upper().split(",")
+                     if re.fullmatch(r"[A-Z]{2}", c)][:8]
+        # And the ones a title must not come from. A code in both lists is
+        # contradictory, and the include side keeps it.
+        excluded = [c for c in (q.get("xcountry") or "").upper().split(",")
+                    if re.fullmatch(r"[A-Z]{2}", c) and c not in countries][:8]
+        lang = q.get("lang", "en")
+        lang = lang if lang in ("en", "cs", "fr") else "en"
+        cast_ids = [int(x) for x in (q.get("cast") or "").split(",") if x.strip().isdigit()][:5]
+        # Actors whose titles are left out. Their filmographies are fetched the
+        # way the included actors' are, and every title in them is dropped: from
+        # the matches, from the included actors' titles, and — returned as
+        # excludedTitles — from what the card adds on its own (Trakt).
+        xcast_ids = [int(x) for x in (q.get("xcast") or "").split(",")
+                     if x.strip().isdigit() and int(x) not in cast_ids][:5]
+
+        cache = self.__dict__.setdefault("_sim_cache", {})
+        key = f"{src}:{kind}:{tmdb_id}:{kw_param}:{','.join(kinds)}:{since}:{until}:{','.join(countries)}:{','.join(excluded)}:{lang}:{cast_ids}:{xcast_ids}"
+        hit = cache.get(key)
+        if hit and _time.monotonic() - hit[0] < 3600:
+            return hit[1]
+
+        try:
+            detail, keywords = await details()
+        except Exception as e:
+            _LOGGER.debug("arr_stack similar: details failed: %s", e)
+            detail, keywords = {}, []
+        genre_ids = [g.get("id") for g in (detail.get("genres") or []) if g.get("id")]
+        credits = detail.get("credits") or {}
+        cast = [
+            {"id": c.get("id"), "name": c.get("name"), "character": c.get("character") or "",
+             "profilePath": c.get("profilePath") or c.get("profile_path")}
+            for c in (credits.get("cast") or []) if c.get("id") and c.get("name")
+        ][:24]
+        # Who wrote the score — the soundtrack's surest artist, where
+        # MusicBrainz often has no release under the film's title
+        composers = list(dict.fromkeys(
+            c.get("name") for c in (credits.get("crew") or [])
+            if c.get("name") and c.get("job") in ("Original Music Composer", "Music", "Composer")
+        ))[:4]
+        kws = [
+            {"id": k.get("id"), "name": k.get("name", "")}
+            for k in keywords
+            if k.get("id") and (k.get("name") or "").lower() not in self._SIM_KW_SKIP
+        ][:16]
+        if kw_param is None:
+            used = kws[:12]
+        else:
+            wanted = {int(x) for x in kw_param.split(",") if x.strip().isdigit()}
+            used = [k for k in kws if k["id"] in wanted]
+
+        # Genre lists barely change; kept per source and language
+        gcache = self.__dict__.setdefault("_sim_genre_cache", {})
+
+        async def _genres(g):
+            gk = f"{src}:{g}:{lang}"
+            if gk not in gcache:
+                v = await genre_list(g, lang)
+                if not v:
+                    return []
+                gcache[gk] = v
+            return gcache[gk]
+
+        pairs = [(dk, k) for dk in kinds for k in used]
+        gkinds = sorted({"movie", *kinds})
+        res = await asyncio.gather(
+            listed("similar"), listed("recommendations"),
+            *[discover(dk, k["id"], since, until, countries) for dk, k in pairs],
+            *[_genres(g) for g in gkinds],
+            *[person(pid) for pid in cast_ids],
+            *[person(pid) for pid in xcast_ids],
+            return_exceptions=True,
+        )
+        sim = res[0] if isinstance(res[0], list) else []
+        rec = res[1] if isinstance(res[1], list) else []
+        found = res[2:2 + len(pairs)]
+        glists = res[2 + len(pairs):2 + len(pairs) + len(gkinds)]
+        base = 2 + len(pairs) + len(gkinds)
+        filmographies = res[base:base + len(cast_ids)]
+        xfilms = res[base + len(cast_ids):]
+
+        scores = {}
+        for (dk, k), r in zip(pairs, found):
+            if isinstance(r, Exception) or not r:
+                continue
+            items, total = r
+            # A keyword on twenty titles says more than one on two thousand
+            weight = 1 / math.log2(2 + max(total, 1) / 20)
+            for i, it in enumerate(items):
+                tid = it.get("id")
+                if not tid or (dk == kind and str(tid) == str(tmdb_id)):
+                    continue
+                e = scores.setdefault(f"{dk}:{tid}", {"item": {**it, "mediaType": dk}, "score": 0.0, "kw": []})
+                e["score"] += weight * (1 - 0.5 * i / (len(items) + 1))
+                e["kw"].append(k["id"])
+        by_kw = sorted(scores.values(), key=lambda e: -e["score"])[:80]
+
+        banned = set()
+        for r in xfilms:
+            if isinstance(r, Exception) or not r:
+                continue
+            for it in r:
+                mt = it.get("mediaType") or it.get("media_type")
+                if mt in ("movie", "tv") and it.get("id"):
+                    banned.add(f"{mt}:{it['id']}")
+        if banned:
+            by_kw = [e for e in by_kw if f"{e['item']['mediaType']}:{e['item'].get('id')}" not in banned]
+            sim = [it for it in sim if f"{it.get('mediaType') or kind}:{it.get('id')}" not in banned]
+            rec = [it for it in rec if f"{it.get('mediaType') or kind}:{it.get('id')}" not in banned]
+
+        # The chosen actors' titles: one with more of them first, then the
+        # better known. Talk shows, news and reality are an actor as themself,
+        # and a title hardly anyone has rated is mostly a cameo.
+        cast_map = {}
+        for pid, r in zip(cast_ids, filmographies):
+            if isinstance(r, Exception) or not r:
+                continue
+            for it in r:
+                mt = it.get("mediaType") or it.get("media_type")
+                if mt not in ("movie", "tv") or not it.get("id"):
+                    continue
+                if mt == kind and str(it.get("id")) == str(tmdb_id):
+                    continue
+                g = it.get("genreIds") or it.get("genre_ids") or []
+                if mt == "tv" and any(x in (10763, 10764, 10767) for x in g):
+                    continue
+                if int(it.get("voteCount") or it.get("vote_count") or 0) < 20:
+                    continue
+                if f"{mt}:{it['id']}" in banned:
+                    continue
+                e = cast_map.setdefault(f"{mt}:{it['id']}", {"item": {**it, "mediaType": mt}, "cast": []})
+                if pid not in e["cast"]:
+                    e["cast"].append(pid)
+        by_cast = sorted(
+            cast_map.values(),
+            key=lambda e: (-len(e["cast"]), -float(e["item"].get("voteCount") or e["item"].get("vote_count") or 0)),
+        )[:120]
+
+        # A film list carries no country, so each title is asked once (and
+        # remembered for a day) — only while a country is being filtered on
+        if countries or excluded:
+            wanted, xset = set(countries), set(excluded)
+
+            # From one of the countries asked for, if any were, and from none
+            # left out. A title whose origin is unknown is from none of them.
+            def keep(codes):
+                have = set(codes)
+                return (not wanted or bool(wanted & have)) and not (xset & have)
+            ocache = self.__dict__.setdefault("_sim_origin_cache", {})
+            if len(ocache) > 5000:
+                ocache.clear()
+            sem = asyncio.Semaphore(8)
+
+            async def _orig(ok, it):
+                have = it.get("originCountry") or it.get("origin_country")
+                if have:
+                    return have
+                ck = f"{src}:{ok}:{it.get('id')}"
+                hit_o = ocache.get(ck)
+                if hit_o and _time.monotonic() - hit_o[0] < 86400:
+                    return hit_o[1]
+                async with sem:
+                    try:
+                        v = await origin(ok, it.get("id"))
+                    except Exception:
+                        v = []
+                ocache[ck] = (_time.monotonic(), v)
+                return v
+
+            pool = [(e["item"]["mediaType"], e["item"]) for e in by_kw + by_cast] + [(kind, it) for it in sim + rec]
+            codes = await asyncio.gather(*[_orig(ok, it) for ok, it in pool])
+            for (ok, it), c in zip(pool, codes):
+                it["originCountry"] = c or []
+            by_kw = [e for e in by_kw if keep(e["item"]["originCountry"])]
+            by_cast = [e for e in by_cast if keep(e["item"]["originCountry"])]
+            sim = [it for it in sim if keep(it["originCountry"])]
+            rec = [it for it in rec if keep(it["originCountry"])]
+
+        genre_names = {}
+        for g in glists:
+            if isinstance(g, list):
+                for x in g:
+                    if x.get("id") and x.get("name"):
+                        genre_names[str(x["id"])] = x["name"]
+
+        out = {
+            "keywords": kws,
+            "used": [k["id"] for k in used],
+            "genreIds": genre_ids,
+            "genreNames": genre_names,
+            "byKeyword": [{**e["item"], "_kw": e["kw"]} for e in by_kw],
+            "cast": cast,
+            "composers": composers,
+            "byCast": [{**e["item"], "_cast": e["cast"]} for e in by_cast],
+            "excludedTitles": sorted(banned),
+            "similar": sim,
+            "recommendations": rec,
+        }
+        if len(cache) > 200:
+            cache.clear()
+        cache[key] = (_time.monotonic(), out)
+        return out
+
     async def _handle_trakt(self, request, path: str, method: str, cfg: dict, session: aiohttp.ClientSession, ssl) -> web.Response:
         token = await self._trakt_access_token(cfg, session)
         if not token:
@@ -4502,6 +5132,59 @@ class ArrStackProxyView(HomeAssistantView):
                 return web.json_response(result)
             except Exception as e:
                 _LOGGER.error("arr_stack Trakt recommendations error: %s", e)
+                return web.json_response({"error": str(e)}, status=502)
+
+        # GET /trakt/related?type=movie|tv&id=<tmdb>  →  titles Trakt's users
+        # link to this one. Trakt addresses titles by its own id, so the TMDB id
+        # is looked up first. Kept for an hour per title.
+        if path == "related" and method == "GET":
+            import time as _time
+            kind = "show" if request.query.get("type") == "tv" else "movie"
+            tmdb_id = request.query.get("id", "")
+            if not tmdb_id.isdigit():
+                return web.json_response([], status=400)
+            cache = self.__dict__.setdefault("_trakt_related_cache", {})
+            key = f"{kind}:{tmdb_id}"
+            hit = cache.get(key)
+            if hit and _time.monotonic() - hit[0] < 3600:
+                return web.json_response(hit[1])
+            try:
+                t = aiohttp.ClientTimeout(total=15)
+                async with session.get(f"{TRAKT_API_BASE}/search/tmdb/{tmdb_id}?type={kind}", headers=headers, ssl=ssl, timeout=t) as r:
+                    found = await r.json() if r.status == 200 else []
+                trakt_id = next((
+                    (f.get(kind) or {}).get("ids", {}).get("trakt")
+                    for f in (found if isinstance(found, list) else []) if f.get(kind)
+                ), None)
+                if not trakt_id:
+                    return web.json_response([])
+                async with session.get(f"{TRAKT_API_BASE}/{kind}s/{trakt_id}/related?limit=30&extended=full", headers=headers, ssl=ssl, timeout=t) as r:
+                    related = await r.json() if r.status == 200 else []
+                items = []
+                for it in (related if isinstance(related, list) else []):
+                    ids = it.get("ids", {})
+                    if not ids.get("tmdb"):
+                        continue
+                    item = {
+                        "mediaType":   "tv" if kind == "show" else "movie",
+                        "id":          ids.get("tmdb"),
+                        "title":       it.get("title", ""),
+                        "releaseDate": str(it.get("year", "")),
+                        "voteAverage": it.get("rating"),
+                        "posterPath":  None,
+                        "overview":    it.get("overview", ""),
+                        "_traktSlug":  ids.get("slug"),
+                    }
+                    if kind == "show":
+                        item["tvdbId"] = ids.get("tvdb")
+                    items.append(item)
+                items = await self._enrich_trakt_posters(items, session, ssl, cfg)
+                if len(cache) > 200:
+                    cache.clear()
+                cache[key] = (_time.monotonic(), items)
+                return web.json_response(items)
+            except Exception as e:
+                _LOGGER.error("arr_stack Trakt related error: %s", e)
                 return web.json_response({"error": str(e)}, status=502)
 
         # DELETE /trakt/recommendations/{movies|shows}/{id}  →  hide from recommendations
