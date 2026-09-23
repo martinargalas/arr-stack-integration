@@ -21,6 +21,10 @@ CONF_RTORRENT_URL  = "rtorrent_url"
 CONF_RTORRENT_USER = "rtorrent_user"
 CONF_RTORRENT_PASS = "rtorrent_password"
 
+CONF_TRANSMISSION_URL  = "transmission_url"
+CONF_TRANSMISSION_USER = "transmission_user"
+CONF_TRANSMISSION_PASS = "transmission_password"
+
 CONF_RADARR_URL = "radarr_url"
 CONF_RADARR_KEY = "radarr_api_key"
 

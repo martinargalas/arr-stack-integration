@@ -14,7 +14,7 @@ A Home Assistant custom integration that acts as a secure server-side proxy betw
 
 ### Supported services
 
-<p><img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/radarr.png" height="36" title="Radarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sonarr.png" height="36" title="Sonarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/lidarr.png" height="36" title="Lidarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/bazarr.png" height="36" title="Bazarr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/qbittorrent.png" height="36" title="qBittorrent"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/deluge.png" height="36" title="Deluge"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/rutorrent.png" height="36" title="rTorrent"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sabnzbd.png" height="36" title="SABnzbd"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/nzbget.png" height="36" title="NZBGet"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/overseerr.png" height="36" title="Overseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyseerr.png" height="36" title="Jellyseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tmdb.png" height="36" title="TMDB"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/prowlarr.png" height="36" title="Prowlarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/maintainerr.png" height="36" title="Maintainerr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/plex.png" height="36" title="Plex"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyfin.png" height="36" title="Jellyfin"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/emby.png" height="36" title="Emby"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/kodi.png" height="36" title="Kodi"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tautulli.png" height="36" title="Tautulli"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellystat.png" height="36" title="Jellystat"/> <img src="https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/tracearr.svg" height="36" title="Tracearr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/trakt.png" height="36" title="Trakt"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/suggest-arr.png" height="36" title="SuggestArr"/> <img src="https://cdn.simpleicons.org/lastdotfm/D51007" height="36" title="Last.fm"/></p>
+<p><img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/radarr.png" height="36" title="Radarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sonarr.png" height="36" title="Sonarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/lidarr.png" height="36" title="Lidarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/bazarr.png" height="36" title="Bazarr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/qbittorrent.png" height="36" title="qBittorrent"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/deluge.png" height="36" title="Deluge"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/rutorrent.png" height="36" title="rTorrent"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/transmission.png" height="36" title="Transmission"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/sabnzbd.png" height="36" title="SABnzbd"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/nzbget.png" height="36" title="NZBGet"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/overseerr.png" height="36" title="Overseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyseerr.png" height="36" title="Jellyseerr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tmdb.png" height="36" title="TMDB"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/prowlarr.png" height="36" title="Prowlarr"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/maintainerr.png" height="36" title="Maintainerr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/plex.png" height="36" title="Plex"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellyfin.png" height="36" title="Jellyfin"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/emby.png" height="36" title="Emby"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/kodi.png" height="36" title="Kodi"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/tautulli.png" height="36" title="Tautulli"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jellystat.png" height="36" title="Jellystat"/> <img src="https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/tracearr.svg" height="36" title="Tracearr"/> &nbsp; <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/trakt.png" height="36" title="Trakt"/> <img src="https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/suggest-arr.png" height="36" title="SuggestArr"/> <img src="https://cdn.simpleicons.org/lastdotfm/D51007" height="36" title="Last.fm"/></p>
 
 ## Why is this needed?
 
@@ -34,6 +34,7 @@ Browsers block direct API calls from a web page to local network services (CORS 
 | qBittorrent | Torrent download client | Optional |
 | Deluge | Torrent download client | Optional |
 | rTorrent / ruTorrent | Torrent download client | Optional |
+| Transmission | Torrent download client | Optional |
 | SABnzbd | Usenet download client | Optional |
 | NZBGet | Usenet download client | Optional |
 | Seerr (Overseerr / Jellyseerr) | Media discovery & requests | Optional |
@@ -95,7 +96,7 @@ Choose which optional services you want to configure. Only the selected steps wi
 | Toggle | Services configured |
 |--------|-------------------|
 | Lidarr | Lidarr |
-| Torrent clients | qBittorrent, Deluge, rTorrent |
+| Torrent clients | qBittorrent, Deluge, rTorrent, Transmission |
 | Usenet clients | SABnzbd, NZBGet |
 | 2nd instances | Radarr 2, Sonarr 2 |
 | Bazarr | Bazarr |
@@ -133,7 +134,7 @@ Music recommendations are set up later, in the Recommendations step — they nee
 
 ---
 
-### Torrent clients — qBittorrent + Deluge + rTorrent *(optional)*
+### Torrent clients — qBittorrent + Deluge + rTorrent + Transmission *(optional)*
 
 | Field | Example |
 |-------|---------|
@@ -145,6 +146,9 @@ Music recommendations are set up later, in the Recommendations step — they nee
 | rTorrent URL | `http://192.168.1.10:9080` — base URL of ruTorrent |
 | rTorrent username | HTTP Basic auth username (if configured) |
 | rTorrent password | HTTP Basic auth password |
+| Transmission URL | `http://192.168.1.10:9091` — base URL of Transmission |
+| Transmission username | Username, if Transmission asks for one |
+| Transmission password | Password, if Transmission asks for one |
 
 Leave any field empty to skip that service individually.
 

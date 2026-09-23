@@ -368,6 +368,7 @@ from .const import (
     CONF_DELUGE_URL, CONF_DELUGE_PASS,
     CONF_GLUETUN_URL, CONF_GLUETUN_KEY,
     CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS,
+    CONF_TRANSMISSION_URL, CONF_TRANSMISSION_USER, CONF_TRANSMISSION_PASS,
     CONF_RADARR_URL, CONF_RADARR_KEY,
     CONF_RADARR2_URL, CONF_RADARR2_KEY,
     CONF_SONARR_URL, CONF_SONARR_KEY,
@@ -739,6 +740,7 @@ class ArrStackProxyView(HomeAssistantView):
                 "deluge":     bool(cfg.get(CONF_DELUGE_URL)),
                 "gluetun":    bool(cfg.get(CONF_GLUETUN_URL)),
                 "rtorrent":   bool(cfg.get(CONF_RTORRENT_URL)),
+                "transmission": bool(cfg.get(CONF_TRANSMISSION_URL)),
                 "radarr2":    bool(cfg.get(CONF_RADARR2_URL)),
                 "sonarr2":    bool(cfg.get(CONF_SONARR2_URL)),
                 "bazarr":     bool(cfg.get(CONF_BAZARR_URL)),
@@ -1097,6 +1099,129 @@ class ArrStackProxyView(HomeAssistantView):
                 elif mode == "delete_files" and hash_id:
                     await _rpc("d.delete_tied", [hash_id])
                     await _rpc("d.erase", [hash_id])
+                else:
+                    return web.json_response({"error": "unknown mode"}, status=400)
+                return web.json_response({"ok": True})
+
+        # ════════════════════════════════════════════
+        # Transmission (RPC)
+        # ════════════════════════════════════════════
+        elif service == "transmission":
+            base = cfg.get(CONF_TRANSMISSION_URL, "").rstrip("/")
+            if not base:
+                return web.json_response({"error": "Transmission not configured"}, status=503)
+            rpc_url = f"{base}/transmission/rpc"
+            user    = cfg.get(CONF_TRANSMISSION_USER, "") or ""
+            passwd  = cfg.get(CONF_TRANSMISSION_PASS, "") or ""
+            auth    = aiohttp.BasicAuth(user, passwd) if user else None
+            store   = self._hass.data.setdefault(DOMAIN, {})
+
+            async def _rpc(method, arguments=None):
+                # Transmission answers an unknown or stale session id with 409
+                # and the one to use in the header. It is kept for as long as it
+                # works, and asked for again the moment it does not.
+                payload = {"method": method, "arguments": arguments or {}}
+                async with aiohttp.ClientSession() as s_:
+                    for attempt in (1, 2):
+                        headers = {}
+                        if sid := store.get("_transmission_sid"):
+                            headers["X-Transmission-Session-Id"] = sid
+                        async with s_.post(
+                            rpc_url,
+                            json=payload,
+                            headers=headers,
+                            auth=auth,
+                            ssl=ssl,
+                            timeout=aiohttp.ClientTimeout(total=15),
+                        ) as r:
+                            if r.status == 409 and attempt == 1:
+                                store["_transmission_sid"] = r.headers.get("X-Transmission-Session-Id", "")
+                                continue
+                            r.raise_for_status()
+                            data = await r.json()
+                            return data.get("arguments") or {}
+                return {}
+
+            # What Transmission calls a status, in the words the card uses
+            def _state(t):
+                # 0 stopped, 1 waiting to check, 2 checking, 3 waiting to
+                # download, 4 downloading, 5 waiting to seed, 6 seeding
+                status = t.get("status", 0)
+                if t.get("error", 0):
+                    return "Error"
+                if status == 0:
+                    return "Paused"
+                if status in (1, 2):
+                    return "Checking"
+                if status == 6:
+                    return "Seeding"
+                if status in (3, 5):
+                    return "Queued"
+                return "Downloading"
+
+            if path == "queue":
+                fields = [
+                    "id", "hashString", "name", "status", "percentDone", "rateDownload",
+                    "rateUpload", "totalSize", "haveValid", "haveUnchecked", "eta",
+                    "peersConnected", "peersSendingToUs", "errorString", "downloadDir",
+                ]
+                data = await _rpc("torrent-get", {"fields": fields})
+                torrents = []
+                for t in data.get("torrents", []):
+                    size = t.get("totalSize", 0) or 0
+                    done = (t.get("haveValid", 0) or 0) + (t.get("haveUnchecked", 0) or 0)
+                    eta  = t.get("eta", -1)
+                    torrents.append({
+                        "hash":                  (t.get("hashString") or "").lower(),
+                        "id":                    t.get("id"),
+                        "name":                  t.get("name", ""),
+                        "progress":              round((t.get("percentDone", 0) or 0) * 100),
+                        "download_payload_rate": t.get("rateDownload", 0) or 0,
+                        "upload_payload_rate":   t.get("rateUpload", 0) or 0,
+                        "total_size":            size,
+                        "total_done":            min(done, size) if size else done,
+                        # Transmission says -1 or -2 when it does not know
+                        "eta":                   eta if isinstance(eta, int) and eta > 0 else 0,
+                        "num_peers":             t.get("peersConnected", 0) or 0,
+                        "num_seeds":             t.get("peersSendingToUs", 0) or 0,
+                        "state":                 _state(t),
+                        "message":               t.get("errorString", "") or "",
+                    })
+                return web.json_response(torrents)
+
+            elif path == "status":
+                stats = await _rpc("session-stats")
+                free = 0
+                try:
+                    sess = await _rpc("session-get", {"fields": ["download-dir"]})
+                    if download_dir := sess.get("download-dir"):
+                        space = await _rpc("free-space", {"path": download_dir})
+                        free = space.get("size-bytes", 0) or 0
+                except Exception as e:  # free space is a nicety, not the point
+                    _LOGGER.debug("arr_stack transmission: free-space failed: %s", e)
+                return web.json_response({
+                    "download_rate": stats.get("downloadSpeed", 0) or 0,
+                    "upload_rate":   stats.get("uploadSpeed", 0) or 0,
+                    "free_space":    free,
+                })
+
+            elif path == "action":
+                body_data = await request.json()
+                mode      = body_data.get("action", "")
+                hash_id   = body_data.get("id", "")
+                ids       = [hash_id] if hash_id else []
+                if mode == "global_pause":
+                    await _rpc("torrent-stop")
+                elif mode == "global_resume":
+                    await _rpc("torrent-start")
+                elif mode == "pause" and ids:
+                    await _rpc("torrent-stop", {"ids": ids})
+                elif mode == "resume" and ids:
+                    await _rpc("torrent-start", {"ids": ids})
+                elif mode == "delete" and ids:
+                    await _rpc("torrent-remove", {"ids": ids, "delete-local-data": False})
+                elif mode == "delete_files" and ids:
+                    await _rpc("torrent-remove", {"ids": ids, "delete-local-data": True})
                 else:
                     return web.json_response({"error": "unknown mode"}, status=400)
                 return web.json_response({"ok": True})

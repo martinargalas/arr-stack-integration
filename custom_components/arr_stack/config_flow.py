@@ -21,6 +21,7 @@ from .const import (
     CONF_DELUGE_URL, CONF_DELUGE_PASS,
     CONF_GLUETUN_URL, CONF_GLUETUN_KEY,
     CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS,
+    CONF_TRANSMISSION_URL, CONF_TRANSMISSION_USER, CONF_TRANSMISSION_PASS,
     CONF_RADARR_URL, CONF_RADARR_KEY,
     CONF_RADARR2_URL, CONF_RADARR2_KEY,
     CONF_SONARR_URL, CONF_SONARR_KEY,
@@ -284,6 +285,36 @@ async def _test_rtorrent(session: aiohttp.ClientSession, url: str, user: str, pa
             return None
     except Exception as e:
         return _log_exc("rtorrent", rpc_url, e)
+
+
+async def _test_transmission(session: aiohttp.ClientSession, url: str, user: str, password: str, ssl=None) -> str | None:
+    if not url:
+        return None
+    if err := _url_error(url):
+        return err
+    rpc_url = f"{url.rstrip('/')}/transmission/rpc"
+    _LOGGER.debug("arr_stack [transmission] testing connection → %s", rpc_url)
+    auth = aiohttp.BasicAuth(user, password) if user else None
+    try:
+        # Transmission answers the first request with 409 and the session id to
+        # use from then on, so a 409 already says the server is there and the
+        # credentials were accepted.
+        async with session.post(
+            rpc_url,
+            json={"method": "session-get"},
+            auth=auth,
+            timeout=aiohttp.ClientTimeout(total=8),
+            ssl=ssl,
+        ) as r:
+            if r.status == 401:
+                return "invalid_auth"
+            if r.status == 409:
+                return None
+            if r.status not in (200, 201):
+                return "cannot_connect"
+            return None
+    except Exception as e:
+        return _log_exc("transmission", rpc_url, e)
 
 
 async def _test_arr(session: aiohttp.ClientSession, url: str, key: str, name: str, ssl=None) -> str | None:
@@ -620,6 +651,7 @@ _TORRENT_GROUPS = {
     "qbittorrent": [CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS],
     "deluge":      [CONF_DELUGE_URL, CONF_DELUGE_PASS],
     "rtorrent":    [CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS],
+    "transmission": [CONF_TRANSMISSION_URL, CONF_TRANSMISSION_USER, CONF_TRANSMISSION_PASS],
     "gluetun":     [CONF_GLUETUN_URL, CONF_GLUETUN_KEY],
 }
 _USENET_GROUPS = {
@@ -725,7 +757,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         d = self._data
         schema = vol.Schema({
             vol.Optional('enable_lidarr',    default=bool(d.get(CONF_LIDARR_URL))): bool,
-            vol.Optional('enable_torrents',  default=bool(d.get(CONF_QBIT_URL) or d.get(CONF_DELUGE_URL) or d.get(CONF_RTORRENT_URL))): bool,
+            vol.Optional('enable_torrents',  default=bool(d.get(CONF_QBIT_URL) or d.get(CONF_DELUGE_URL) or d.get(CONF_RTORRENT_URL) or d.get(CONF_TRANSMISSION_URL))): bool,
             vol.Optional('enable_usenet',    default=bool(d.get(CONF_SAB_URL) or d.get(CONF_NZBGET_URL))): bool,
             vol.Optional('enable_quality',   default=bool(d.get(CONF_RADARR2_URL) or d.get(CONF_SONARR2_URL))): bool,
             vol.Optional('enable_bazarr',    default=bool(d.get(CONF_BAZARR_URL))): bool,
@@ -747,7 +779,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=False,
         )
 
-    # ── Torrent clients: qBittorrent + Deluge + rTorrent ─────────────────────
+    # ── Torrent clients: qBittorrent, Deluge, rTorrent, Transmission ────────
 
     async def async_step_torrents(self, user_input=None):
         errors = {}
@@ -789,9 +821,21 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = _svc_err("rtorrent", err)
 
             if not errors:
+                err = await _test_transmission(
+                    session,
+                    user_input.get(CONF_TRANSMISSION_URL, ""),
+                    user_input.get(CONF_TRANSMISSION_USER, ""),
+                    user_input.get(CONF_TRANSMISSION_PASS, ""),
+                    ssl=ssl,
+                )
+                if err:
+                    errors["base"] = _svc_err("transmission", err)
+
+            if not errors:
                 for key in [CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
                              CONF_DELUGE_URL, CONF_DELUGE_PASS,
                              CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS,
+                             CONF_TRANSMISSION_URL, CONF_TRANSMISSION_USER, CONF_TRANSMISSION_PASS,
                              CONF_GLUETUN_URL, CONF_GLUETUN_KEY]:
                     self._data[key] = user_input.get(key, "")
                 return await self._next_step()
@@ -802,6 +846,8 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_DELUGE_URL:    "http://192.168.1.x:8112",
             CONF_RTORRENT_URL:  "http://192.168.1.x:9080",
             CONF_RTORRENT_USER: "",
+            CONF_TRANSMISSION_URL:  "http://192.168.1.x:9091",
+            CONF_TRANSMISSION_USER: "",
             CONF_GLUETUN_URL:   "http://192.168.1.x:8000",
         }
         schema = self.add_suggested_values_to_schema(
