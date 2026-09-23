@@ -150,6 +150,8 @@ Music recommendations are set up later, in the Recommendations step — they nee
 | Transmission username | Username, if Transmission asks for one |
 | Transmission password | Password, if Transmission asks for one |
 
+Transmission only accepts RPC from its own machine by default. If it answers 403, stop it and set `rpc-whitelist-enabled` and `rpc-host-whitelist-enabled` to `false` in its `settings.json` — it rewrites that file on shutdown, so editing it while running has no effect.
+
 Leave any field empty to skip that service individually.
 
 ---
