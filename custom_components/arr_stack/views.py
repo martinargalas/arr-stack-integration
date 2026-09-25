@@ -450,6 +450,15 @@ QBIT_ENDPOINTS = {
 }
 
 
+class _Unreachable(Exception):
+    """A service that is configured but not answering right now.
+
+    Told apart from a service that is not set up at all (503) and from a real
+    fault (500): the card keeps a client it cannot reach, and stops shouting
+    about it on every poll.
+    """
+
+
 class ArrStackProxyView(HomeAssistantView):
     """Proxy /api/arr_stack/{service}/{path} → lokální služby."""
 
@@ -710,6 +719,9 @@ class ArrStackProxyView(HomeAssistantView):
             )
         try:
             return await self._route(request, service, path, method)
+        except _Unreachable as exc:
+            _LOGGER.debug("arr_stack unreachable [%s/%s]: %s", service, path, exc)
+            return web.json_response({"error": str(exc)}, status=502)
         except aiohttp.ClientConnectorError as exc:
             _LOGGER.error("arr_stack connection error [%s/%s]: %s", service, path, exc)
             return web.json_response({"error": f"Nelze se připojit: {exc}"}, status=503)
@@ -1023,7 +1035,17 @@ class ArrStackProxyView(HomeAssistantView):
                         timeout=aiohttp.ClientTimeout(total=15),
                     ) as r:
                         raw = await r.read()
-                        return _xmlrpc.loads(raw)[0][0]
+                        # A web server in front of a stopped rTorrent answers
+                        # with an HTML error page. Fed to the XML parser that
+                        # became a 500, which the card reads as "configured and
+                        # broken" and asks again on every poll. It is an outage,
+                        # and 502 says so.
+                        if r.status >= 400:
+                            raise _Unreachable(f"rTorrent answered {r.status}")
+                        try:
+                            return _xmlrpc.loads(raw)[0][0]
+                        except Exception as e:
+                            raise _Unreachable(f"rTorrent did not answer XML-RPC: {e}") from e
 
             if path == "queue":
                 fields = [
@@ -2441,6 +2463,25 @@ class ArrStackProxyView(HomeAssistantView):
                 # Ordinary answer: the artist may simply not be on this server.
                 return web.json_response({})
 
+            # GET plex/identity → the server's own machineIdentifier, which is
+            # what app.plex.tv keys a deep link on. The sessions carry the
+            # *player's* identifier, which is a different thing entirely.
+            if path == "identity" and method == "GET":
+                try:
+                    async with http.get(
+                        f"{base}/identity",
+                        headers=plex_hdrs,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                        ssl=ssl,
+                    ) as r:
+                        data = (await r.json(content_type=None)) or {}
+                except Exception:
+                    return web.json_response({})
+                container = data.get("MediaContainer") or {}
+                return web.json_response({
+                    "machineIdentifier": container.get("machineIdentifier") or "",
+                })
+
             # GET plex/lookup?tmdbId=X or ?tvdbId=X → find Plex item by external ID
             # Tries multiple GUID formats (new agent, old agent) then per-section fallback.
             if path == "lookup" and method == "GET":
@@ -2757,6 +2798,33 @@ class ArrStackProxyView(HomeAssistantView):
                     "certifications":  _tmdb_certs(d),
                     "youTubeTrailerId": trailer["key"] if trailer else None,
                 })
+
+            # A show known only by an id from elsewhere — what a Jellyfin
+            # session carries for a series the library named its own way, and
+            # how Bluey once opened Blue Bloods. The id may be the series' own
+            # or the playing episode's, and an episode names its show, so both
+            # are answered here.
+            if path.startswith("find/") and method == "GET":
+                _, source, external_id = path.split("/", 2)
+                sources = {"tvdb": "tvdb_id", "imdb": "imdb_id", "tvrage": "tvrage_id"}
+                if source not in sources:
+                    return web.json_response({"error": "unknown source"}, status=400)
+                async with http.get(
+                    f"{_TMDB_BASE}/find/{external_id}",
+                    params={**base_params, "external_source": sources[source]},
+                    timeout=timeout,
+                ) as r:
+                    d = await r.json()
+                show = (d.get("tv_results") or [None])[0]
+                if show:
+                    return web.json_response({"tmdbId": show.get("id"), "name": show.get("name", "")})
+                episode = (d.get("tv_episode_results") or [None])[0]
+                if not episode or not episode.get("show_id"):
+                    return web.json_response({"tmdbId": None, "name": ""})
+                show_id = episode["show_id"]
+                async with http.get(f"{_TMDB_BASE}/tv/{show_id}", params=base_params, timeout=timeout) as r:
+                    sd = await r.json()
+                return web.json_response({"tmdbId": show_id, "name": sd.get("name", "")})
 
             if path.startswith("tv/") and method == "GET":
                 tv_id = path[3:]
@@ -4073,12 +4141,48 @@ class ArrStackProxyView(HomeAssistantView):
                     pass
                 return web.Response(status=404)
 
+            # Manual import, the way Radarr and Sonarr have it: what Lidarr found
+            # in a folder it could not import on its own, so the card can show
+            # the same list Lidarr's own dialog shows.
+            if path == "manualimport" and method == "GET":
+                download_id = request.query.get("downloadId", "")
+                artist_id   = request.query.get("artistId", "")
+                folder      = request.query.get("folder", "")
+                params = {"filterExistingFiles": request.query.get("filterExistingFiles", "false")}
+                if folder:
+                    params["folder"] = folder
+                elif download_id:
+                    params["downloadId"] = download_id
+                if artist_id:
+                    params["artistId"] = artist_id
+                async with http.get(
+                    f"{base}/api/v1/manualimport",
+                    headers=hdrs,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=60),
+                    ssl=ssl,
+                ) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            if path == "qualitydefs" and method == "GET":
+                async with http.get(f"{base}/api/v1/qualitydefinition", headers=hdrs, ssl=ssl) as r:
+                    return _arr_json(await r.read(), r.status)
+
+            # Lidarr has no language profiles at all. The card asks every *arr
+            # the same question, so it is answered rather than 404ed.
+            if path == "languages" and method == "GET":
+                return web.json_response([])
+
             if path == "queue" and method == "GET":
                 params = {
                     "page": "1",
                     "pageSize": request.query.get("pageSize", "100"),
                     "includeAlbum": "true",
                     "includeArtist": "true",
+                    # A release Lidarr could not parse is downloading all the
+                    # same, and it is left out of the queue unless asked for —
+                    # which is why a grab of one appeared to hang for ever.
+                    "includeUnknownArtistItems": "true",
                 }
                 async with http.get(
                     f"{base}/api/v1/queue", params=params, headers=hdrs, ssl=ssl
@@ -4536,6 +4640,44 @@ class ArrStackProxyView(HomeAssistantView):
 
                 if path == "sessions":
                     active = [s for s in sessions if s.get("NowPlayingItem")]
+                    # An episode carries its own provider ids, which say nothing
+                    # about the series the card has to look up — and matching a
+                    # series by name alone put "Blue" (Bluey) on Blue Bloods.
+                    # The series is fetched once and remembered: a session list
+                    # is polled every few seconds and a series does not move.
+                    cache = self._hass.data.setdefault(DOMAIN, {}).setdefault("_jf_series", {})
+                    wanted = {
+                        np.get("SeriesId")
+                        for sess in active
+                        if (np := sess.get("NowPlayingItem")) and np.get("SeriesId")
+                    } - set(cache)
+                    if wanted:
+                        hdrs2 = {"X-Emby-Token": api_token, "Accept": "application/json"} if api_token else {}
+                        try:
+                            # /Items/{id} is not a route on current Jellyfin; the
+                            # ids are asked for as a query, which also takes the
+                            # whole batch in one request.
+                            async with http.get(
+                                f"{server_url}/Items",
+                                headers=hdrs2,
+                                params={"ids": ",".join(list(wanted)[:20]), "fields": "ProviderIds"},
+                                timeout=aiohttp.ClientTimeout(total=8),
+                                ssl=ssl,
+                            ) as r:
+                                found = ((await r.json(content_type=None)) or {}).get("Items") or []
+                            for item in found:
+                                if iid := item.get("Id"):
+                                    cache[iid] = item.get("ProviderIds") or {}
+                        except Exception as e:
+                            _LOGGER.debug("arr_stack jellyfin series lookup failed: %s", e)
+                        # Asked for and not answered: remembered as nothing, so
+                        # the next poll does not ask again for the same series.
+                        for series_id in wanted:
+                            cache.setdefault(series_id, {})
+                    for sess in active:
+                        np = sess.get("NowPlayingItem") or {}
+                        if sid := np.get("SeriesId"):
+                            np["SeriesProviderIds"] = cache.get(sid) or {}
                     return web.json_response({"sessions": active, "server_url": server_url, "api_token": api_token})
                 if path == "stop":
                     body = {}
