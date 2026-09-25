@@ -4478,6 +4478,19 @@ class ArrStackProxyView(HomeAssistantView):
                 async with http.get(f"{base}/api/v1/indexer/categories", headers=hdrs, ssl=ssl) as r:
                     return _arr_json(await r.read(), r.status)
 
+        # JellyHA keeps its own address, and a household may run it without the
+        # official Jellyfin integration at all — which is the only place the
+        # card can learn where that server's web client lives.
+        elif service == "jellyha":
+            if path == "server" and method == "GET":
+                entries = self._hass.config_entries.async_entries("jellyha")
+                if not entries:
+                    return web.json_response({"_notConfigured": True})
+                opts = {**entries[0].data, **entries[0].options}
+                url = (opts.get("external_url") or opts.get("server_url") or "").rstrip("/")
+                return web.json_response({"url": url})
+            return web.json_response({"error": "unknown path"}, status=404)
+
         elif service == "jellyfin":
             try:
                 jf_entries = self._hass.config_entries.async_entries("jellyfin")
@@ -4699,6 +4712,14 @@ class ArrStackProxyView(HomeAssistantView):
                                 pass
                         stop_url = f"{server_url}/Sessions/{session_id}/Playing/Stop"
                         async with session_http.post(stop_url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            if resp.status >= 300:
+                                # Jellyfin refuses an unauthenticated stop with
+                                # 401, and the card cannot tell that from a
+                                # session that had already ended.
+                                _LOGGER.warning(
+                                    "arr_stack jellyfin stop refused: %s %s",
+                                    resp.status, (await resp.text())[:200],
+                                )
                             return web.json_response({"ok": resp.status < 300}, status=200)
             except Exception as exc:
                 _LOGGER.warning("arr_stack jellyfin sessions error: %s", exc)
