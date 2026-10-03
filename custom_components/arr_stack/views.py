@@ -980,7 +980,7 @@ class ArrStackProxyView(HomeAssistantView):
                 if path == "queue":
                     fields = ["name", "state", "progress", "download_payload_rate",
                               "upload_payload_rate", "total_size", "total_done",
-                              "num_seeds", "num_peers", "eta", "hash"]
+                              "num_seeds", "num_peers", "eta", "hash", "time_added"]
                     data = await _deluge_rpc("core.get_torrents_status", [{}, fields], _session=http)
                     raw = data.get("result") or {}
                     torrents = [{"hash": h, **v} for h, v in raw.items()]
@@ -1054,10 +1054,16 @@ class ArrStackProxyView(HomeAssistantView):
                     "d.is_hash_checking=", "d.message=", "d.peers_connected=",
                     "d.peers_not_connected=",
                 ]
-                rows = await _rpc("d.multicall2", ["", "main"] + fields)
+                # d.load_date (when the torrent was added, for sorting by date)
+                # came with rTorrent 0.9.7, and an unknown method fails the
+                # whole multicall: an older rTorrent is asked again without it.
+                try:
+                    rows = await _rpc("d.multicall2", ["", "main"] + fields + ["d.load_date="])
+                except _Unreachable:
+                    rows = [list(r) + [0] for r in await _rpc("d.multicall2", ["", "main"] + fields)]
                 torrents = []
                 for row in rows:
-                    h, name, size, done, dl, ul, active, is_open, checking, message, peers_c, peers_nc = row
+                    h, name, size, done, dl, ul, active, is_open, checking, message, peers_c, peers_nc, added = row
                     pct = round(done * 100 / size) if size > 0 else 0
                     remaining = (size - done)
                     eta = int(remaining / dl) if dl > 0 else 0
@@ -1084,6 +1090,7 @@ class ArrStackProxyView(HomeAssistantView):
                         "num_seeds":             peers_c,
                         "state":                 state,
                         "message":               message,
+                        "time_added":            added or 0,
                     })
                 return web.json_response(torrents)
 
@@ -1186,6 +1193,7 @@ class ArrStackProxyView(HomeAssistantView):
                     "id", "hashString", "name", "status", "percentDone", "rateDownload",
                     "rateUpload", "totalSize", "haveValid", "haveUnchecked", "eta",
                     "peersConnected", "peersSendingToUs", "errorString", "downloadDir",
+                    "addedDate",
                 ]
                 data = await _rpc("torrent-get", {"fields": fields})
                 torrents = []
@@ -1208,6 +1216,7 @@ class ArrStackProxyView(HomeAssistantView):
                         "num_seeds":             t.get("peersSendingToUs", 0) or 0,
                         "state":                 _state(t),
                         "message":               t.get("errorString", "") or "",
+                        "time_added":            t.get("addedDate", 0) or 0,
                     })
                 return web.json_response(torrents)
 
