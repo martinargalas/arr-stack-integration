@@ -391,7 +391,9 @@ Your existing settings are pre-filled. Clearing a URL disables that service in t
 
 ## Anonymous usage metrics
 
-The card sends one anonymous ping per browser session: its version, whether it is running on a phone, and which services are configured — just the names, no URLs, no keys, no titles, nothing about your library. The installation is identified by a short hash of your dashboard's hostname, so it cannot be traced back to you. You can see exactly what is collected at [argalas.org/arr-stats](https://argalas.org/arr-stats).
+The card sends one anonymous ping per browser session: its version, whether it is running on a phone, and which services are configured — just the names, no URLs, no keys, no titles, nothing about your library. The installation is identified by a salted hash of Home Assistant's own instance ID, which this integration hands to the card: one value for your whole installation, and nothing that leads back to it. You can see exactly what is collected at [argalas.org/arr-stats](https://argalas.org/arr-stats).
+
+> Up to v1.9.6 the card identified an installation by the first characters of its hostname, base64-encoded, and this section wrongly called that a hash. Those stored values have been replaced with one-way hashes; see the card's [Analytics section](https://github.com/martinargalas/ha-arr-stack-card#analytics) for the details.
 
 Knowing which parts people actually use is what guides where the work goes next, so leaving it on genuinely helps. If you would rather not take part, that is entirely fine:
 
