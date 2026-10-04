@@ -242,6 +242,110 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 # In-memory cache for Tracearr admin JWT tokens: entry_id → {"access": str, "refresh": str}
 _tracearr_token_cache: dict = {}
 
+_tracearr_cookie_jwt_cache: dict = {}
+_tracearr_jwt_warned: set = set()
+_tracearr_shape_logged: set = set()
+
+
+def _tracearr_session_tokens(cookie: str) -> list[tuple[str, str]]:
+    """The session token out of a stored cookie header, for the bearer plugin.
+
+    Both spellings are offered: as pasted, and percent-decoded, since a value
+    copied out of a browser's cookie table can carry either.
+    """
+    from urllib.parse import unquote
+    out: list[tuple[str, str]] = []
+    for pair in [c.strip() for c in cookie.split(";") if "=" in c]:
+        name, _, value = pair.partition("=")
+        if "session_token" not in name.strip():
+            continue
+        value = value.strip()
+        if not value:
+            continue
+        out.append(("session-bearer", value))
+        decoded = unquote(value)
+        if decoded != value:
+            out.append(("session-bearer-decoded", decoded))
+    return out
+
+
+def _tracearr_log_cookie_shape(cookie: str) -> None:
+    """What the stored cookie looks like, without saying what it is.
+
+    A value copied from a browser's cookie table is easy to truncate, and a
+    short one is indistinguishable from an expired session in the reply.
+    """
+    if not cookie or cookie in _tracearr_shape_logged:
+        return
+    _tracearr_shape_logged.add(cookie)
+    shape = []
+    for pair in [c.strip() for c in cookie.split(";") if "=" in c]:
+        name, _, value = pair.partition("=")
+        v = value.strip()
+        shape.append(f"{name.strip()}: {len(v)} chars, {'signed' if '.' in v else 'no dot'}")
+    _LOGGER.warning("Tracearr session cookie holds — %s", "; ".join(shape) or "nothing usable")
+
+
+async def _tracearr_jwt_from_cookie(http: aiohttp.ClientSession, tracearr_url: str, cookie: str, ssl=None) -> str | None:
+    """Trade a signed-in session for the token the admin API asks for.
+
+    Tracearr 2.x answers its library and statistics endpoints with
+    "Invalid or expired token" — the wording of a JWT check, not of a session
+    one — and refuses both the Better Auth cookie and the public API key. Better
+    Auth issues a JWT for the current session on request, which is what the web
+    app itself carries, so the cookie is exchanged for one here.
+    """
+    import time, json as _json, base64 as _b64
+    if not cookie:
+        return None
+    cached = _tracearr_cookie_jwt_cache.get(tracearr_url, "")
+    if cached:
+        try:
+            payload = cached.split(".")[1]
+            payload += "=" * (4 - len(payload) % 4)
+            if _json.loads(_b64.b64decode(payload)).get("exp", 0) - time.time() > 60:
+                return cached
+        except Exception:
+            pass
+    headers = {
+        "Accept": "application/json",
+        "Cookie": cookie,
+        "Origin": tracearr_url,
+        "Referer": f"{tracearr_url}/",
+    }
+    # Where Better Auth is mounted differs between releases, so both are tried
+    for suffix in ("/api/v1/auth/token", "/api/auth/token"):
+        try:
+            async with http.get(
+                f"{tracearr_url}{suffix}",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+                ssl=ssl,
+            ) as r:
+                if r.status != 200:
+                    _LOGGER.debug("Tracearr token exchange %s → %s", suffix, r.status)
+                    continue
+                data = await r.json(content_type=None)
+        except Exception as exc:
+            _LOGGER.debug("Tracearr token exchange %s failed: %s", suffix, exc)
+            continue
+        token = (data or {}).get("token") or (data or {}).get("accessToken")
+        if token:
+            _tracearr_cookie_jwt_cache[tracearr_url] = token
+            _tracearr_jwt_warned.discard(tracearr_url)
+            return token
+    # Said once per server per run: repeating it on every admin request would
+    # bury the refusals that say what is actually wrong.
+    if tracearr_url not in _tracearr_jwt_warned:
+        _tracearr_jwt_warned.add(tracearr_url)
+        _LOGGER.warning(
+            "Tracearr: the session cookie could not be exchanged for a token "
+            "(tried /api/v1/auth/token and /api/auth/token)",
+        )
+        _tracearr_log_cookie_shape(cookie)
+    return None
+
+
 async def _tracearr_get_access_token(http: aiohttp.ClientSession, tracearr_url: str, entry_id: str, refresh_token: str, ssl=None, hass=None, plex_token: str = "") -> str | None:
     """Return valid Tracearr admin access token, refreshing if needed."""
     import time, json as _json
@@ -658,6 +762,25 @@ class ArrStackProxyView(HomeAssistantView):
         }, headers=login_hdrs, cookies=req_cookies if req_cookies else None, ssl=ssl) as r:
             await r.read()
 
+    async def _install_id(self) -> str | None:
+        """Salted hash of this installation's id, for the anonymous ping."""
+        if self._cfg.get(CONF_METRICS_OPT_OUT, False):
+            return None
+        store = self._hass.data.setdefault(DOMAIN, {})
+        if "_install_id" in store:
+            return store["_install_id"]
+        try:
+            # Imported here rather than at the top: nothing else in this view
+            # needs it, and an install too old to have it simply falls back.
+            from homeassistant.helpers import instance_id as _instance_id
+            raw = await _instance_id.async_get(self._hass)
+        except Exception:  # noqa: BLE001 — no id is a reason to fall back, not to fail
+            return None
+        import hashlib
+        iid = hashlib.sha256(f"arr-stack:{raw}".encode()).hexdigest()[:16]
+        store["_install_id"] = iid
+        return iid
+
     async def _seerr_session_for_mode(self, user_mode: str, ssl=None):
         if user_mode == "guest" and self._cfg.get(CONF_SEERR_GUEST_EMAIL):
             return await self._seerr_guest_sess(ssl=ssl), self._seerr_guest_login
@@ -745,7 +868,13 @@ class ArrStackProxyView(HomeAssistantView):
         if service == "capabilities":
             seerr_url = cfg.get(CONF_SEERR_URL, '').lower()
             seerr_type = 'jellyseerr' if 'jelly' in seerr_url else 'overseerr'
+            iid = await self._install_id()
             return web.json_response({
+                # One identifier per Home Assistant installation for the usage
+                # ping, the same in every browser and behind every address. It
+                # is a salted hash of HA's own instance id: stable, but it
+                # cannot be turned back into that id or tied to HA's analytics.
+                "iid": iid,
                 "qbit":       bool(cfg.get(CONF_QBIT_URL)),
                 "sabnzbd":    bool(cfg.get(CONF_SAB_URL)),
                 "nzbget":     bool(cfg.get(CONF_NZBGET_URL)),
@@ -3459,84 +3588,110 @@ class ArrStackProxyView(HomeAssistantView):
             if not tracearr_url or not tracearr_key:
                 return web.json_response({"error": "Tracearr not configured"}, status=503)
 
-            # Library, stats, rules and sessions endpoints require admin JWT; public endpoints use the public key
+            # Library, stats, rules and sessions endpoints used to need a
+            # signed-in admin; the public API key answers for the rest.
             is_library = path.startswith("v1/library") or path.startswith("v1/stats") or path.startswith("v1/rules") or path.startswith("v1/sessions")
             session_cookie = cfg.get(CONF_TRACEARR_SESSION_COOKIE, "")
-            headers = {
+            base_headers = {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
             }
+
+            # What to try, in order. Tracearr has moved this line before: an
+            # account signed in through Plex has no JWT and only its Better Auth
+            # cookie, while 2.x answers the same endpoints for an API key. Rather
+            # than guess which release is on the other end, the proxy offers each
+            # credential it has and keeps the first that is accepted.
+            attempts: list[tuple[str, dict]] = []
             if is_library:
-                # Accounts signed in through Plex never get a JWT — Tracearr's own
-                # web app runs on the Better Auth session cookie, and the API takes
-                # it. So a stored cookie wins; the JWT path stays for accounts that
-                # do have one (Jellyfin/Emby API-key logins).
                 if session_cookie:
-                    headers["Cookie"] = session_cookie
-                else:
-                    refresh_token = cfg.get(CONF_TRACEARR_REFRESH_TOKEN, "")
-                    entry_id = next(iter(self._hass.config_entries.async_entries("arr_stack")), None)
-                    entry_id_str = entry_id.entry_id if entry_id else "default"
-                    plex_token = cfg.get(CONF_PLEX_TOKEN, "")
-                    admin_token = await _tracearr_get_access_token(http, tracearr_url, entry_id_str, refresh_token, ssl=ssl, hass=self._hass, plex_token=plex_token)
-                    if not admin_token:
-                        return web.json_response({"error": "Tracearr admin auth unavailable — set tracearr_session_cookie (or tracearr_refresh_token) in config"}, status=503)
-                    headers["Authorization"] = f"Bearer {admin_token}"
+                    attempts.append(("cookie", {
+                        **base_headers,
+                        "Cookie": session_cookie,
+                        # Better Auth checks where a cookie-authenticated request
+                        # claims to come from; a browser says so by itself.
+                        "Origin": tracearr_url,
+                        "Referer": f"{tracearr_url}/",
+                    }))
+                if session_cookie:
+                    # Tracearr enables Better Auth's bearer plugin, so the same
+                    # session token the cookie carries is accepted in the
+                    # Authorization header — and a cookie that some hop strips
+                    # or rewrites gets a second chance this way.
+                    for label, token in _tracearr_session_tokens(session_cookie):
+                        attempts.append((label, {**base_headers, "Authorization": f"Bearer {token}"}))
+                    cookie_jwt = await _tracearr_jwt_from_cookie(http, tracearr_url, session_cookie, ssl=ssl)
+                    if cookie_jwt:
+                        attempts.append(("cookie-jwt", {**base_headers, "Authorization": f"Bearer {cookie_jwt}"}))
+                attempts.append(("api-key", {**base_headers, "Authorization": f"Bearer {tracearr_key}"}))
+                refresh_token = cfg.get(CONF_TRACEARR_REFRESH_TOKEN, "")
+                plex_token = cfg.get(CONF_PLEX_TOKEN, "")
+                if refresh_token or plex_token:
+                    entry = next(iter(self._hass.config_entries.async_entries("arr_stack")), None)
+                    entry_id_str = entry.entry_id if entry else "default"
+                    admin_token = await _tracearr_get_access_token(
+                        http, tracearr_url, entry_id_str, refresh_token,
+                        ssl=ssl, hass=self._hass, plex_token=plex_token,
+                    )
+                    if admin_token:
+                        attempts.append(("jwt", {**base_headers, "Authorization": f"Bearer {admin_token}"}))
             else:
-                headers["Authorization"] = f"Bearer {tracearr_key}"
+                attempts.append(("api-key", {**base_headers, "Authorization": f"Bearer {tracearr_key}"}))
+
+            # Which credential worked last time, so the retry costs one request
+            # rather than one per call.
+            cache = self._hass.data.setdefault(DOMAIN, {}).setdefault("_tracearr_auth", {})
+            group = "admin" if is_library else "public"
+            if cache.get(group):
+                attempts.sort(key=lambda a: 0 if a[0] == cache[group] else 1)
 
             params = dict(request.rel_url.query)
-
+            body = await request.read() if method in ("POST", "PATCH", "PUT") else None
             target_url = f"{tracearr_url}/api/{path}"
-            if method == "GET":
-                async with http.get(
-                    target_url,
-                    headers=headers,
-                    params=params,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                    ssl=ssl,
-                ) as r:
-                    raw = await r.read()
-                    _tracearr_rotate_cookie(self._hass, r, session_cookie)
-                    ct = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
-                    return web.Response(body=raw, content_type=ct, status=r.status)
-            elif method == "POST":
-                body = await request.read()
-                async with http.post(
-                    target_url,
-                    headers=headers,
-                    data=body,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                    ssl=ssl,
-                ) as r:
-                    raw = await r.read()
-                    _tracearr_rotate_cookie(self._hass, r, session_cookie)
-                    ct = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
-                    return web.Response(body=raw, content_type=ct, status=r.status)
-            elif method == "PATCH":
-                body = await request.read()
-                async with http.patch(
-                    target_url,
-                    headers=headers,
-                    data=body,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                    ssl=ssl,
-                ) as r:
-                    raw = await r.read()
-                    _tracearr_rotate_cookie(self._hass, r, session_cookie)
-                    ct = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
-                    return web.Response(body=raw, content_type=ct, status=r.status)
-            elif method == "DELETE":
-                async with http.delete(
-                    target_url,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                    ssl=ssl,
-                ) as r:
-                    raw = await r.read()
-                    _tracearr_rotate_cookie(self._hass, r, session_cookie)
-                    ct = r.headers.get("Content-Type", "application/json").split(";")[0].strip()
-                    return web.Response(body=raw, content_type=ct, status=r.status)
+
+            async def _send(headers):
+                kw = {
+                    "headers": headers,
+                    "timeout": aiohttp.ClientTimeout(total=15),
+                    "ssl": ssl,
+                }
+                if method == "GET":
+                    async with http.get(target_url, params=params, **kw) as r:
+                        return r, await r.read()
+                if method == "POST":
+                    async with http.post(target_url, data=body, **kw) as r:
+                        return r, await r.read()
+                if method == "PATCH":
+                    async with http.patch(target_url, data=body, **kw) as r:
+                        return r, await r.read()
+                if method == "PUT":
+                    async with http.put(target_url, data=body, **kw) as r:
+                        return r, await r.read()
+                async with http.delete(target_url, **kw) as r:
+                    return r, await r.read()
+
+            last = None
+            for idx, (label, headers) in enumerate(attempts):
+                resp, raw = await _send(headers)
+                if resp.status not in (401, 403):
+                    if label == "cookie":
+                        _tracearr_rotate_cookie(self._hass, resp, session_cookie)
+                    cache[group] = label
+                    ct = resp.headers.get("Content-Type", "application/json").split(";")[0].strip()
+                    return web.Response(body=raw, content_type=ct, status=resp.status)
+                # Refused: say which credential it was, so a stale cookie reads
+                # differently from an endpoint that has stopped taking one.
+                _LOGGER.warning(
+                    "arr_stack tracearr %s %s → %s (auth=%s): %s",
+                    method, path, resp.status, label,
+                    (raw or b"")[:200].decode("utf-8", "replace"),
+                )
+                last = (resp, raw)
+            if last is not None:
+                resp, raw = last
+                ct = resp.headers.get("Content-Type", "application/json").split(";")[0].strip()
+                return web.Response(body=raw, content_type=ct, status=resp.status)
+            return web.json_response({"error": "Tracearr not configured"}, status=503)
 
         # ════════════════════════════════════════════
         # System
