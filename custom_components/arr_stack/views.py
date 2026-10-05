@@ -775,6 +775,8 @@ class ArrStackProxyView(HomeAssistantView):
                 "metrics": not bool(cfg.get(CONF_METRICS_OPT_OUT, False)),
                 "suggestarr": bool(cfg.get(CONF_SUGGESTARR_URL)),
                 "jellyfin":   bool(self._hass.config_entries.async_entries("jellyfin")),
+                "emby":       bool(cfg.get(CONF_EMBY_URL) and cfg.get(CONF_EMBY_KEY)),
+                "kodi":       bool(self._hass.config_entries.async_entries("kodi")),
                 "seerrType":  seerr_type,
                 # Host:port of each arr instance. The card cannot otherwise tell
                 # which of its instances a Maintainerr server refers to — the two
@@ -2186,7 +2188,9 @@ class ArrStackProxyView(HomeAssistantView):
         elif service == "bazarr":
             base = cfg.get(CONF_BAZARR_URL, "").rstrip("/")
             if not base:
-                return web.json_response({"data": []})
+                # Said the way the other services say it. An empty list read as
+                # a Bazarr with no movies, and the card kept asking.
+                return web.json_response({"error": "Bazarr not configured"}, status=503)
             hdrs = {
                 "X-API-KEY": cfg.get(CONF_BAZARR_KEY, ""),
                 "Accept": "application/json",
