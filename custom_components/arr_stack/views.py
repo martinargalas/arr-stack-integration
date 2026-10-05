@@ -1092,6 +1092,8 @@ class ArrStackProxyView(HomeAssistantView):
         # ════════════════════════════════════════════
         elif service == "deluge":
             base     = cfg.get(CONF_DELUGE_URL, "").rstrip("/")
+            if not base:
+                return web.json_response({"error": "Deluge not configured"}, status=503)
             password = cfg.get(CONF_DELUGE_PASS, "") or ""
             rpc_url  = f"{base}/json"
 
