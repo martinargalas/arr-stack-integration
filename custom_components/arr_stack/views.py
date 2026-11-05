@@ -17,6 +17,60 @@ _LOGGER = logging.getLogger(__name__)
 # MusicBrainz ids are uuids; anything else is not worth a round trip.
 _MBID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
+# Fields of a Radarr film or a Sonarr show the card never reads, and among the
+# biggest: every film's alternate titles run to a couple of kB on their own.
+_LIB_DROP = ("alternateTitles", "keywords")
+# Below this a response goes as it is; above it, gzipped when the browser asks
+_GZIP_MIN = 2048
+
+
+def _slim_library(raw: bytes) -> bytes:
+    """A Radarr or Sonarr library without the fields the card never reads.
+    Anything that is not a list of objects goes back as it came."""
+    try:
+        import orjson  # noqa: PLC0415
+        loads, dumps = orjson.loads, orjson.dumps
+    except ImportError:  # pragma: no cover — Home Assistant ships orjson
+        import json  # noqa: PLC0415
+        loads = json.loads
+        dumps = lambda o: json.dumps(o, separators=(",", ":")).encode()  # noqa: E731
+    try:
+        data = loads(raw)
+    except ValueError:
+        return raw
+    if not isinstance(data, list):
+        return raw
+    for item in data:
+        if isinstance(item, dict):
+            for key in _LIB_DROP:
+                item.pop(key, None)
+    return dumps(data)
+
+
+def _gz(resp: web.Response) -> web.Response:
+    """Compress a big answer for a browser that takes gzip. A library is
+    megabytes of JSON that shrinks to a tenth — on a phone away from home that
+    is most of the card's first load."""
+    body = resp.body
+    if isinstance(body, (bytes, bytearray)) and len(body) >= _GZIP_MIN:
+        resp.enable_compression()
+    return resp
+
+
+async def _library_response(hass, r) -> web.Response:
+    """A Radarr film list or Sonarr show list, slimmed in a worker thread and
+    compressed on the way out."""
+    body = await r.read()
+    if r.status == 200:
+        body = await hass.async_add_executor_job(_slim_library, body)
+    return _gz(web.Response(body=body, content_type="application/json", status=r.status))
+
+
+# A Sonarr poster file, as its mediacover API names them: the original or one
+# of the copies it keeps at a smaller width
+_COVER_NAME = re.compile(r"(poster|fanart|banner)(-\d+)?\.(jpg|png)")
+
+
 def _arr_json(raw: bytes, status: int) -> web.Response:
     """Pass an *arr response through, filling in an empty body.
 
@@ -27,7 +81,7 @@ def _arr_json(raw: bytes, status: int) -> web.Response:
     """
     if not raw or not raw.strip():
         return web.json_response({"ok": True}, status=200 if status == 204 else status)
-    return web.Response(body=raw, content_type="application/json", status=status)
+    return _gz(web.Response(body=raw, content_type="application/json", status=status))
 
 
 # ── Deezer stand-in artwork ────────────────────────────────────────────────
@@ -900,6 +954,8 @@ class ArrStackProxyView(HomeAssistantView):
                 # kept working during the transition, but it is the one we want
                 # users to replace with their own.
                 "tmdbOwnKey": bool(cfg.get(CONF_TMDB_KEY, "").strip()),
+                # Sonarr posters through sonarr/image (card ≥ 1.12)
+                "arrImage": True,
                 # The card checks this before sending its anonymous ping
                 "metrics": not bool(cfg.get(CONF_METRICS_OPT_OUT, False)),
                 "suggestarr": bool(cfg.get(CONF_SUGGESTARR_URL)),
@@ -1424,9 +1480,7 @@ class ArrStackProxyView(HomeAssistantView):
                 url = f"{base}/api/v3/movie"
                 if debug: _LOGGER.debug("arr_stack radarr → GET %s", url)
                 async with http.get(url, headers=hdrs, ssl=ssl) as r:
-                    body = await r.read()
-                    if debug: _LOGGER.debug("arr_stack radarr ← status=%s len=%s", r.status, len(body))
-                    return web.Response(body=body, content_type="application/json", status=r.status)
+                    return await _library_response(self._hass, r)
 
             if path == "profiles":
                 async with http.get(
@@ -1713,9 +1767,30 @@ class ArrStackProxyView(HomeAssistantView):
                 url = f"{base}/api/v3/series"
                 if debug: _LOGGER.debug("arr_stack sonarr → GET %s", url)
                 async with http.get(url, headers=hdrs, ssl=ssl) as r:
-                    body = await r.read()
-                    if debug: _LOGGER.debug("arr_stack sonarr ← status=%s len=%s", r.status, len(body))
-                    return web.Response(body=body, content_type="application/json", status=r.status)
+                    return await _library_response(self._hass, r)
+
+            # A show's poster from Sonarr itself. Its remote address is
+            # TheTVDB's original, a few hundred kB apiece; Sonarr keeps copies
+            # at 500 and 250 px. The card asks with a signed path, so the key
+            # stays here; `v` is Sonarr's lastWrite, there for the browser's cache.
+            if path == "image" and method == "GET":
+                item = request.query.get("id", "")
+                fname = request.query.get("file", "poster-500.jpg")
+                if not item.isdigit() or not _COVER_NAME.fullmatch(fname):
+                    return web.Response(status=400)
+                async with http.get(
+                    f"{base}/api/v3/mediacover/{item}/{fname}",
+                    headers=hdrs,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    ssl=ssl,
+                ) as r:
+                    if r.status != 200:
+                        return web.Response(status=404)
+                    ct = r.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
+                    return web.Response(
+                        body=await r.read(), content_type=ct,
+                        headers={"Cache-Control": "private, max-age=604800"},
+                    )
 
             if path == "series" and method == "POST":
                 body = await request.json()
