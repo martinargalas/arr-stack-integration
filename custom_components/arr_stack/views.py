@@ -1609,6 +1609,13 @@ class ArrStackProxyView(HomeAssistantView):
                         status=r.status,
                     )
 
+            if path == "recentimports" and method == "GET":
+                # The newest imports across the library (eventType 3 =
+                # downloadFolderImported): what Recently Added goes by, since a
+                # file's own date moves whenever a rescan re-adds it
+                async with http.get(f"{base}/api/v3/history", headers=hdrs, params={"pageSize": "250", "sortKey": "date", "sortDirection": "descending", "eventType": "3"}, ssl=ssl) as r:
+                    return _arr_json(await r.read(), r.status)
+
             if path == "history" and method == "GET":
                 movie_id = request.query.get("movieId", "")
                 async with http.get(f"{base}/api/v3/history/movie", headers=hdrs, params={"movieId": movie_id, "pageSize": "200"}, ssl=ssl) as r:
@@ -3063,6 +3070,10 @@ class ArrStackProxyView(HomeAssistantView):
                     "voteAverage":     d.get("vote_average", 0),
                     "genres":          [{"name": g["name"]} for g in d.get("genres", [])],
                     "numberOfSeasons": d.get("number_of_seasons", 0),
+                    # Each season's poster, for the series detail's season tiles
+                    # when Seerr is not there or has no picture for one
+                    "seasons":         [{"seasonNumber": s.get("season_number"), "posterPath": s.get("poster_path")}
+                                        for s in d.get("seasons", []) if s.get("season_number") is not None],
                     "credits":         _tmdb_cast(d),
                     "certifications":  _tmdb_certs(d),
                     "youTubeTrailerId": trailer["key"] if trailer else None,
