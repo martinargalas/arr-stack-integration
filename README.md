@@ -1,6 +1,6 @@
 # Arr Stack Integration
 
-[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![HA Marketplace](https://img.shields.io/badge/HA%20Marketplace-custom-orange.svg)](https://www.home-assistant.io/integrations/marketplace/)
 [![version](https://img.shields.io/github/v/release/martinargalas/arr-stack-integration?cacheSeconds=0)](https://github.com/martinargalas/arr-stack-integration/releases)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.1%2B-brightgreen.svg)](https://www.home-assistant.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -60,7 +60,21 @@ Browsers block direct API calls from a web page to local network services (CORS 
 
 ## Installation
 
-### Via HACS (recommended)
+### Via the Marketplace (recommended, Home Assistant 2026.11+)
+
+Home Assistant 2026.11 replaced HACS with the built-in [Marketplace](https://www.home-assistant.io/integrations/marketplace/).
+
+1. Go to **Settings → Marketplace**
+2. Select **Add from link** (top right)
+3. Under **GitHub link**, enter `martinargalas/arr-stack-integration` and select **Add** — if asked for the type, choose **Integration**
+4. On the integration's page select **Install**, check the version and select **Install** again
+5. Restart Home Assistant (a repair under **Settings → System → Repairs** offers it)
+6. Go to **Settings → Devices & Services → + Add Integration**
+7. Search for **Arr Stack** and follow the setup wizard
+
+Already installed through HACS? Upgrading to 2026.11 carries it over to the Marketplace, updates included — nothing to do.
+
+### Via HACS (Home Assistant 2026.10 and earlier)
 
 1. Open HACS → **Integrations**
 2. Click the **⋮** menu (top right) → **Custom repositories**
