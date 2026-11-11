@@ -522,6 +522,8 @@ from .const import (
     DOMAIN,
     CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
     CONF_SAB_URL, CONF_SAB_KEY,
+    CONF_QBIT2_URL, CONF_QBIT2_USER, CONF_QBIT2_PASS,
+    CONF_SAB2_URL, CONF_SAB2_KEY,
     CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS,
     CONF_DELUGE_URL, CONF_DELUGE_PASS,
     CONF_GLUETUN_URL, CONF_GLUETUN_KEY,
@@ -628,6 +630,9 @@ class ArrStackProxyView(HomeAssistantView):
         self._hass = hass
         # Dedikovaná session pro qBit — potřebuje cookie jar pro session auth
         self._qbit_session: aiohttp.ClientSession | None = None
+        # Each qBittorrent keeps its own cookie: one jar for both, and logging
+        # into one would sign the other out.
+        self._qbit2_session: aiohttp.ClientSession | None = None
         # Session pro admin Overseerr požadavky — potřebuje cookie jar pro CSRF token
         self._seerr_admin_session: aiohttp.ClientSession | None = None
         # Session pro rodinný Overseerr účet
@@ -651,15 +656,25 @@ class ArrStackProxyView(HomeAssistantView):
 
     # ── Session helpers ──────────────────────────────────────────────────
 
-    async def _qbit_sess(self) -> aiohttp.ClientSession:
+    async def _qbit_sess(self, second: bool = False) -> aiohttp.ClientSession:
         """Vrátí (nebo vytvoří) aiohttp session s cookie jar pro qBit."""
-        if self._qbit_session is None or self._qbit_session.closed:
-            self._qbit_session = aiohttp.ClientSession(
-                cookie_jar=aiohttp.CookieJar(unsafe=True)
-            )
-        return self._qbit_session
+        attr = "_qbit2_session" if second else "_qbit_session"
+        sess = getattr(self, attr)
+        if sess is None or sess.closed:
+            sess = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True))
+            setattr(self, attr, sess)
+        return sess
 
-    async def _qbit_login(self, session: aiohttp.ClientSession, ssl=None, debug=False) -> None:
+    def _qbit_conf(self, second: bool = False) -> tuple[str, str, str]:
+        """URL, user and password of the first or the second qBittorrent."""
+        cfg = self._cfg
+        if second:
+            return (cfg.get(CONF_QBIT2_URL, "").rstrip("/"),
+                    cfg.get(CONF_QBIT2_USER, ""), cfg.get(CONF_QBIT2_PASS, ""))
+        return (cfg.get(CONF_QBIT_URL, "").rstrip("/"),
+                cfg.get(CONF_QBIT_USER, ""), cfg.get(CONF_QBIT_PASS, ""))
+
+    async def _qbit_login(self, session: aiohttp.ClientSession, ssl=None, debug=False, second: bool = False) -> None:
         """Přihlásí se do qBit (nastaví session cookie).
 
         Úspěch: qBit 4.x vrací 200 s body "Ok.", qBit 5.x vrací 204 bez body.
@@ -668,18 +683,19 @@ class ArrStackProxyView(HomeAssistantView):
         Bez kontroly response je tohle neviditelné — downstream volání pak
         dostanou neautentizovanou odpověď a JSON parse selže s nejasnou chybou.
         """
-        url = f"{self._cfg.get(CONF_QBIT_URL, '').rstrip('/')}/api/v2/auth/login"
+        base, user, password = self._qbit_conf(second)
+        url = f"{base}/api/v2/auth/login"
         async with session.post(url, data={
-            "username": self._cfg.get(CONF_QBIT_USER, ""),
-            "password": self._cfg.get(CONF_QBIT_PASS, ""),
+            "username": user,
+            "password": password,
         }, ssl=ssl) as r:
             body = await r.read()
             if not (r.status == 204 or (r.status == 200 and body == b"Ok.")):
                 _LOGGER.warning(
-                    "arr_stack qbit login failed — status=%s body=%s (check credentials, "
+                    "arr_stack qbit%s login failed — status=%s body=%s (check credentials, "
                     "IP ban from repeated failed logins, or 'Host header validation' in "
                     "qBittorrent WebUI settings)",
-                    r.status, body[:200],
+                    "2" if second else "", r.status, body[:200],
                 )
             elif debug:
                 _LOGGER.debug("arr_stack qbit login → status=%s body=%s", r.status, body)
@@ -931,6 +947,9 @@ class ArrStackProxyView(HomeAssistantView):
                 "iid": iid,
                 "qbit":       bool(cfg.get(CONF_QBIT_URL)),
                 "sabnzbd":    bool(cfg.get(CONF_SAB_URL)),
+                # A second qBittorrent and SABnzbd; the card calls them 1 and 2
+                "qbit2":      bool(cfg.get(CONF_QBIT2_URL)),
+                "sabnzbd2":   bool(cfg.get(CONF_SAB2_URL)),
                 "nzbget":     bool(cfg.get(CONF_NZBGET_URL)),
                 "deluge":     bool(cfg.get(CONF_DELUGE_URL)),
                 "gluetun":    bool(cfg.get(CONF_GLUETUN_URL)),
@@ -982,14 +1001,16 @@ class ArrStackProxyView(HomeAssistantView):
         # ════════════════════════════════════════════
         # qBittorrent
         # ════════════════════════════════════════════
-        if service == "qbit":
-            if not cfg.get(CONF_QBIT_URL):
+        if service in ("qbit", "qbit2"):
+            second = service == "qbit2"
+            qbase = self._qbit_conf(second)[0]
+            if not qbase:
                 return web.json_response({"error": "qBittorrent not configured"}, status=503)
-            qs = await self._qbit_sess()
-            await self._qbit_login(qs, ssl=ssl, debug=debug)
+            qs = await self._qbit_sess(second)
+            await self._qbit_login(qs, ssl=ssl, debug=debug, second=second)
 
             if path == "torrents":
-                url = f"{cfg[CONF_QBIT_URL].rstrip('/')}/api/v2/torrents/info?filter=all"
+                url = f"{qbase}/api/v2/torrents/info?filter=all"
                 if debug: _LOGGER.debug("arr_stack qbit → GET %s", url)
                 async with qs.get(url, ssl=ssl) as r:
                     body = await r.read()
@@ -998,7 +1019,7 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "transfer":
                 async with qs.get(
-                    f"{cfg[CONF_QBIT_URL].rstrip('/')}/api/v2/transfer/info",
+                    f"{qbase}/api/v2/transfer/info",
                     ssl=ssl,
                 ) as r:
                     return web.Response(
@@ -1009,7 +1030,7 @@ class ArrStackProxyView(HomeAssistantView):
 
             if path == "maindata":
                 async with qs.get(
-                    f"{cfg[CONF_QBIT_URL].rstrip('/')}/api/v2/sync/maindata",
+                    f"{qbase}/api/v2/sync/maindata",
                     ssl=ssl,
                 ) as r:
                     return web.Response(
@@ -1035,12 +1056,12 @@ class ArrStackProxyView(HomeAssistantView):
                 )
 
                 async with qs.post(
-                    f"{cfg[CONF_QBIT_URL].rstrip('/')}{v5ep}", data=data,
+                    f"{qbase}{v5ep}", data=data,
                     ssl=ssl,
                 ) as r:
                     if r.status == 404 and v4ep != v5ep:
                         async with qs.post(
-                            f"{cfg[CONF_QBIT_URL].rstrip('/')}{v4ep}", data=data,
+                            f"{qbase}{v4ep}", data=data,
                             ssl=ssl,
                         ) as r2:
                             return web.json_response({"ok": r2.status == 200})
@@ -1049,11 +1070,12 @@ class ArrStackProxyView(HomeAssistantView):
         # ════════════════════════════════════════════
         # SABnzbd
         # ════════════════════════════════════════════
-        elif service == "sabnzbd":
-            base = cfg.get(CONF_SAB_URL, "").rstrip("/")
+        elif service in ("sabnzbd", "sabnzbd2"):
+            second = service == "sabnzbd2"
+            base = cfg.get(CONF_SAB2_URL if second else CONF_SAB_URL, "").rstrip("/")
             if not base:
                 return web.json_response({"error": "SABnzbd not configured"}, status=503)
-            key = cfg.get(CONF_SAB_KEY, "")
+            key = cfg.get(CONF_SAB2_KEY if second else CONF_SAB_KEY, "")
 
             if path == "queue":
                 if debug: _LOGGER.debug("arr_stack sabnzbd → GET %s/api?mode=queue (apikey=REDACTED)", base)
@@ -2172,6 +2194,15 @@ class ArrStackProxyView(HomeAssistantView):
                         status=r.status,
                     )
 
+            # A film's collection (the other films of a series of them), for
+            # the sheet under a film's detail on a phone
+            if path.startswith("collection/") and method == "GET":
+                col_id = path.split("/", 1)[1]
+                if not col_id.isdigit():
+                    return web.json_response({"error": "id required"}, status=400)
+                async with http.get(f"{base}/api/v1/collection/{col_id}", headers=hdrs, ssl=ssl) as r:
+                    return web.Response(body=await r.read(), content_type="application/json", status=r.status)
+
             if path.startswith("movie/") or path.startswith("tv/"):
                 async with http.get(
                     f"{base}/api/v1/{path}", headers=hdrs,
@@ -3023,6 +3054,21 @@ class ArrStackProxyView(HomeAssistantView):
                     "credits":         _tmdb_cast(d),
                     "certifications":  _tmdb_certs(d),
                     "youTubeTrailerId": trailer["key"] if trailer else None,
+                    "collection":      ({"id": d["belongs_to_collection"].get("id"), "name": d["belongs_to_collection"].get("name", "")}
+                                        if d.get("belongs_to_collection") else None),
+                })
+
+            # A film's collection when there is no Seerr: Seerr's shape
+            if path.startswith("collection/") and method == "GET":
+                col_id = path.split("/", 1)[1]
+                if not col_id.isdigit():
+                    return web.json_response({"error": "id required"}, status=400)
+                async with http.get(f"{_TMDB_BASE}/collection/{col_id}", params=base_params, timeout=timeout) as r:
+                    d = await r.json()
+                return web.json_response({
+                    "id":    d.get("id"),
+                    "name":  d.get("name", ""),
+                    "parts": [_tmdb_item(p, "movie") for p in d.get("parts", [])],
                 })
 
             # A show known only by an id from elsewhere — what a Jellyfin

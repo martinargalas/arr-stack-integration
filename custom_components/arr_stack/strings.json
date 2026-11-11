@@ -49,6 +49,20 @@
               "qbittorrent_password": "The password for the qBittorrent Web UI"
             }
           },
+          "qbittorrent2": {
+            "name": "Second qBittorrent",
+            "description": "Only if you run two, e.g. one behind a VPN and one not. The card shows both in one list as 1 and 2, with a switch between them. Leave empty to skip.",
+            "data": {
+              "qbittorrent2_url": "URL",
+              "qbittorrent2_user": "Username",
+              "qbittorrent2_password": "Password"
+            },
+            "data_description": {
+              "qbittorrent2_url": "e.g. http://192.168.1.10:8082",
+              "qbittorrent2_user": "The username for this qBittorrent's Web UI",
+              "qbittorrent2_password": "The password for this qBittorrent's Web UI"
+            }
+          },
           "deluge": {
             "name": "Deluge",
             "description": "Alternative to qBittorrent. Leave empty to skip.",
@@ -117,6 +131,18 @@
             "data_description": {
               "sabnzbd_url": "e.g. http://192.168.1.10:8089 — default port is 8089",
               "sabnzbd_api_key": "Find it in SABnzbd → Config → General → API Key"
+            }
+          },
+          "sabnzbd2": {
+            "name": "Second SABnzbd",
+            "description": "Only if you run two. The card shows both in one list as 1 and 2, with a switch between them. Leave empty to skip.",
+            "data": {
+              "sabnzbd2_url": "URL",
+              "sabnzbd2_api_key": "API key"
+            },
+            "data_description": {
+              "sabnzbd2_url": "e.g. http://192.168.1.10:8090",
+              "sabnzbd2_api_key": "Find it in this SABnzbd → Config → General → API Key"
             }
           },
           "nzbget": {
@@ -570,7 +596,17 @@
       "lidarr_invalid_url": "The Prowlarr address must start with http:// or https://",
       "transmission_cannot_connect": "Could not reach Transmission — check the URL and that it is running",
       "transmission_invalid_auth": "Transmission refused the credentials — check the username and password",
-      "transmission_invalid_url": "The Transmission address must start with http:// or https://"
+      "transmission_invalid_url": "The Transmission address must start with http:// or https://",
+      "qbit2_bad_credentials": "Wrong username or password for the second qBittorrent username or password",
+      "qbit2_login_failed": "Second qBittorrent login failed — check credentials and that the Web UI is enabled in qBittorrent settings",
+      "sabnzbd2_bad_key": "Invalid second SABnzbd API key — find it in SABnzbd → Config → General → API Key",
+      "qbit2_forbidden": "Second qBittorrent refused the connection (403 Forbidden) — go to qBittorrent → Tools → Options → Web UI → disable 'Enable Host header validation' or add Home Assistant's IP to the allowed list",
+      "qbit2_cannot_connect": "Could not reach second qBittorrent — check the URL and that it is running",
+      "qbit2_invalid_auth": "Second qBittorrent refused the credentials — check the username, password or API key",
+      "qbit2_invalid_url": "The second qBittorrent address must start with http:// or https://",
+      "sabnzbd2_cannot_connect": "Could not reach second SABnzbd — check the URL and that it is running",
+      "sabnzbd2_invalid_auth": "Second SABnzbd refused the credentials — check the username, password or API key",
+      "sabnzbd2_invalid_url": "The second SABnzbd address must start with http:// or https://"
     }
   },
   "selector": {

@@ -17,6 +17,8 @@ from .const import (
     DOMAIN,
     CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
     CONF_SAB_URL, CONF_SAB_KEY,
+    CONF_QBIT2_URL, CONF_QBIT2_USER, CONF_QBIT2_PASS,
+    CONF_SAB2_URL, CONF_SAB2_KEY,
     CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS,
     CONF_DELUGE_URL, CONF_DELUGE_PASS,
     CONF_GLUETUN_URL, CONF_GLUETUN_KEY,
@@ -609,8 +611,13 @@ def _flat(user_input):
     return out
 
 
-def _sections(groups, types=None, required=()):
-    """Build a schema of open sections from {section_name: [field, ...]}."""
+def _sections(groups, types=None, required=(), collapsed=()):
+    """Build a schema of sections from {section_name: [field, ...]}.
+
+    Sections are open, except those named in `collapsed`: an optional extra
+    such as a second download client stays out of the way of everyone who has
+    only one.
+    """
     types = types or {}
     schema = {}
     for name, fields in groups.items():
@@ -618,7 +625,7 @@ def _sections(groups, types=None, required=()):
         for field in fields:
             marker = vol.Required if field in required else vol.Optional
             inner[marker(field)] = types.get(field, str)
-        schema[vol.Required(name)] = section(vol.Schema(inner), {"collapsed": False})
+        schema[vol.Required(name)] = section(vol.Schema(inner), {"collapsed": name in collapsed})
     return vol.Schema(schema)
 
 
@@ -641,6 +648,12 @@ def _svc_err(service: str, code: str) -> str:
     return f"{service}_{code}" if code in _GENERIC_ERRORS else code
 
 
+def _second_err(service: str, code: str) -> str:
+    """The same error for the second instance of a client: qbit_… → qbit2_…."""
+    code = _svc_err(service, code)
+    return f"{service}2_{code[len(service) + 1:]}" if code.startswith(f"{service}_") else code
+
+
 # ── Config Flow ──────────────────────────────────────────────────────────────
 
 # All configurable step groups in order
@@ -649,6 +662,7 @@ _ALL_STEPS = ['media', 'lidarr', 'torrents', 'usenet', 'quality', 'bazarr', 'dis
 # Field layout per step: {step: {section: [field, ...]}}
 _TORRENT_GROUPS = {
     "qbittorrent": [CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS],
+    "qbittorrent2": [CONF_QBIT2_URL, CONF_QBIT2_USER, CONF_QBIT2_PASS],
     "deluge":      [CONF_DELUGE_URL, CONF_DELUGE_PASS],
     "rtorrent":    [CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS],
     "transmission": [CONF_TRANSMISSION_URL, CONF_TRANSMISSION_USER, CONF_TRANSMISSION_PASS],
@@ -656,6 +670,7 @@ _TORRENT_GROUPS = {
 }
 _USENET_GROUPS = {
     "sabnzbd": [CONF_SAB_URL, CONF_SAB_KEY],
+    "sabnzbd2": [CONF_SAB2_URL, CONF_SAB2_KEY],
     "nzbget":  [CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS],
 }
 _MEDIA_GROUPS = {
@@ -799,6 +814,17 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if err:
                 errors["base"] = _svc_err("qbit", err)
 
+            if not errors and user_input.get(CONF_QBIT2_URL, "").strip():
+                err = await _test_qbit(
+                    session,
+                    user_input.get(CONF_QBIT2_URL, ""),
+                    user_input.get(CONF_QBIT2_USER, ""),
+                    user_input.get(CONF_QBIT2_PASS, ""),
+                    ssl=ssl,
+                )
+                if err:
+                    errors["base"] = _second_err("qbit", err)
+
             if not errors:
                 err = await _test_deluge(
                     session,
@@ -833,6 +859,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not errors:
                 for key in [CONF_QBIT_URL, CONF_QBIT_USER, CONF_QBIT_PASS,
+                             CONF_QBIT2_URL, CONF_QBIT2_USER, CONF_QBIT2_PASS,
                              CONF_DELUGE_URL, CONF_DELUGE_PASS,
                              CONF_RTORRENT_URL, CONF_RTORRENT_USER, CONF_RTORRENT_PASS,
                              CONF_TRANSMISSION_URL, CONF_TRANSMISSION_USER, CONF_TRANSMISSION_PASS,
@@ -851,7 +878,8 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_GLUETUN_URL:   "http://192.168.1.x:8000",
         }
         schema = self.add_suggested_values_to_schema(
-            _sections(_TORRENT_GROUPS), _nest(_TORRENT_GROUPS, suggested)
+            _sections(_TORRENT_GROUPS, collapsed=() if self._data.get(CONF_QBIT2_URL) else ("qbittorrent2",)),
+            _nest(_TORRENT_GROUPS, suggested)
         )
         return self.async_show_form(
             step_id="torrents",
@@ -879,6 +907,16 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if err:
                 errors["base"] = _svc_err("sabnzbd", err)
 
+            if not errors and user_input.get(CONF_SAB2_URL, "").strip():
+                err = await _test_sabnzbd(
+                    session,
+                    user_input.get(CONF_SAB2_URL, ""),
+                    user_input.get(CONF_SAB2_KEY, ""),
+                    ssl=ssl,
+                )
+                if err:
+                    errors["base"] = _second_err("sabnzbd", err)
+
             if not errors:
                 err = await _test_nzbget(
                     session,
@@ -892,6 +930,7 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not errors:
                 for key in [CONF_SAB_URL, CONF_SAB_KEY,
+                             CONF_SAB2_URL, CONF_SAB2_KEY,
                              CONF_NZBGET_URL, CONF_NZBGET_USER, CONF_NZBGET_PASS]:
                     self._data[key] = user_input.get(key, "")
                 return await self._next_step()
@@ -901,7 +940,8 @@ class ArrStackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_NZBGET_URL: "http://192.168.1.x:6789",
         }
         schema = self.add_suggested_values_to_schema(
-            _sections(_USENET_GROUPS), _nest(_USENET_GROUPS, suggested)
+            _sections(_USENET_GROUPS, collapsed=() if self._data.get(CONF_SAB2_URL) else ("sabnzbd2",)),
+            _nest(_USENET_GROUPS, suggested)
         )
         return self.async_show_form(
             step_id="usenet",

@@ -165,6 +165,8 @@ Music recommendations are set up later, in the Recommendations step — they nee
 | Transmission username | Username, if Transmission asks for one |
 | Transmission password | Password, if Transmission asks for one |
 
+**A second qBittorrent** *(optional, folded under the torrent fields)*: its own URL, username and password. The card shows both in one list, each download marked **1** or **2**, with a switch in the section's header.
+
 Transmission only accepts RPC from its own machine by default. If it answers 403, stop it and set `rpc-whitelist-enabled` and `rpc-host-whitelist-enabled` to `false` in its `settings.json` — it rewrites that file on shutdown, so editing it while running has no effect.
 
 Leave any field empty to skip that service individually.
@@ -180,6 +182,8 @@ Leave any field empty to skip that service individually.
 | NZBGet URL | `http://192.168.1.10:6789` |
 | NZBGet username | `nzbget` (default) |
 | NZBGet password | Find in NZBGet → Settings → Security |
+
+**A second SABnzbd** *(optional, folded under the usenet fields)*: its own URL and API key, shown with the first as **1** and **2**.
 
 Leave any field empty to skip that service individually.
 
