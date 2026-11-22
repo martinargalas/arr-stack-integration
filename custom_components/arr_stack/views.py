@@ -1204,23 +1204,45 @@ class ArrStackProxyView(HomeAssistantView):
                 elif path == "action":
                     body = await request.json()
                     mode = body.get("action", "")
-                    torrent_id = body.get("id", "")
+                    # Cards up to v1.11.6 sent their own words: pauseAll /
+                    # resumeAll, the torrent as "hash", deleteFiles (#50)
+                    mode = {"pauseAll": "global_pause", "resumeAll": "global_resume"}.get(mode, mode)
+                    if mode == "delete" and body.get("deleteFiles"):
+                        mode = "delete_files"
+                    torrent_id = body.get("id") or body.get("hash") or ""
+
+                    async def _call(*tries):
+                        # Deluge 2 takes one id in pause_torrent/resume_torrent
+                        # and a list in pause_torrents/resume_torrents; Deluge
+                        # 1.3 only has the first, taking a list. The first
+                        # that answers without an error wins.
+                        err = None
+                        for method, params in tries:
+                            data = await _deluge_rpc(method, params, _session=http)
+                            err = (data or {}).get("error")
+                            if not err:
+                                return None
+                        _LOGGER.warning("Deluge %s failed: %s", mode, err)
+                        # Deluge sends the daemon's whole traceback; its last line says it
+                        msg = str((err or {}).get("message") or "Deluge error")
+                        lines = [ln.strip() for ln in msg.replace("\\n", "\n").splitlines() if ln.strip() and ln.strip() != "]"]
+                        return web.json_response({"error": (lines[-1] if lines else msg)[:200]}, status=502)
 
                     if mode == "global_pause":
-                        await _deluge_rpc("core.pause_all_torrents", [], _session=http)
+                        failed = await _call(("core.pause_all_torrents", []), ("core.pause_session", []))
                     elif mode == "global_resume":
-                        await _deluge_rpc("core.resume_all_torrents", [], _session=http)
+                        failed = await _call(("core.resume_all_torrents", []), ("core.resume_session", []))
                     elif mode == "pause" and torrent_id:
-                        await _deluge_rpc("core.pause_torrent", [[torrent_id]], _session=http)
+                        failed = await _call(("core.pause_torrents", [[torrent_id]]), ("core.pause_torrent", [[torrent_id]]))
                     elif mode == "resume" and torrent_id:
-                        await _deluge_rpc("core.resume_torrent", [[torrent_id]], _session=http)
+                        failed = await _call(("core.resume_torrents", [[torrent_id]]), ("core.resume_torrent", [[torrent_id]]))
                     elif mode == "delete" and torrent_id:
-                        await _deluge_rpc("core.remove_torrent", [torrent_id, False], _session=http)
+                        failed = await _call(("core.remove_torrent", [torrent_id, False]))
                     elif mode == "delete_files" and torrent_id:
-                        await _deluge_rpc("core.remove_torrent", [torrent_id, True], _session=http)
+                        failed = await _call(("core.remove_torrent", [torrent_id, True]))
                     else:
                         return web.json_response({"error": "unknown mode"}, status=400)
-                    return web.json_response({"ok": True})
+                    return failed or web.json_response({"ok": True})
 
         # ════════════════════════════════════════════
         # rTorrent (via ruTorrent XMLRPC)
